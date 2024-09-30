@@ -12,7 +12,6 @@ function teemboom_comments_load(){
 		page_url = `localhost@${unique_id}${location.pathname}`
 	}
 
-
 	fetch(`${teemboom_url}/teemboom_config`, {
 		'headers': {'Content-type': 'application/json'},
 		'method': 'POST',
@@ -33,22 +32,7 @@ function teemboom_comments_load(){
 			teemboom_app(config)
 		}
 		theme_js.setAttribute('src',`${teemboom_url}/static/app/dist/theme/${config.theme}/teemboom_app.js`)
-		document.head.appendChild(theme_js);
-		let emoji_js = document.createElement('script');
-		emoji_js.onload = () => {
-			// new EmojiPicker({
-			// 	trigger: [
-			// 		{
-			// 			selector: '#teemboom_send_text',
-			// 			insertInto: ['#teemboom_send_text'] // '.selector' can be used without array
-			// 		}
-			// 	],
-			// 	closeButton: true
-			// });
-		}
-		emoji_js.setAttribute('src', `${teemboom_url}/static/app/dist/emoji.js`)
-		document.head.appendChild(emoji_js);
-		
+		document.head.appendChild(theme_js);		
 	})
 }
 teemboom_comments_load()
@@ -65,7 +49,6 @@ class teemboomCommentsClass{
 		this.comments_box_id = obj.comment_box_id
 		this.like_number_class = obj.like_number_class
 		this.dislike_number_class = obj.dislike_number_class
-
 		this.load()
 	}
 
@@ -77,7 +60,7 @@ class teemboomCommentsClass{
 	comments_no = 0;
 	main_div;
 	session_id = null
-	user = null
+	user = false
 	default_hex = ["FFCC66", "99CCCC", "FF6666", "CC99FF", "4285F4", "FF6666", "66CCCC", "FF9966", "5555FF", "66CC99"]
 
 	load(){
@@ -98,14 +81,18 @@ class teemboomCommentsClass{
 			let popup_button = document.getElementById('teemboom_popup')
 			let cover_div;
 			let cover_div_state = false
-			popup_button.addEventListener('click', ()=>{popup_toogle()})
+			const popup_toogle = ()=>{
+				if (cover_div_state) {cover_div.style.display = 'none'; cover_div_state = false}
+				else {cover_div.style.display = 'block'; cover_div_state = true}
+			}
+			popup_button.addEventListener('click', popup_toogle)
 			cover_div = document.createElement('section')
 			cover_div.id = 'teemboom_comments_popup'
 			cover_div.className = 'teemboom_root'
 			let popup_close = document.createElement('div')
 			popup_close.id = 'teemboom_popup_close'
 			popup_close.innerHTML = '<p>X</p>'
-			popup_close.addEventListener('click', ()=>{popup_toogle()})
+			popup_close.addEventListener('click', popup_toogle)
 			cover_div.appendChild(popup_close)
 			this.main_div = document.createElement('div')
 			this.main_div.id = 'teemboom_comments'
@@ -161,7 +148,7 @@ class teemboomCommentsClass{
 		}
 	}
 
-	get_comments(){
+	getComments(){
 		fetch(`${this.teemboom_url}/teemboom_comments`, {
 			'headers': {'Content-type': 'application/json'},
 			'method': 'POST',
@@ -303,6 +290,7 @@ class teemboomCommentsClass{
 		if (this.config.identification == '1'){
 			// TODO if config is 1, username should be 'Guest<random_string> to identify the user
 			// This string would be stored in session
+			this.user = {}
 			this.user.username = 'Guest'
 			return this.user
 		}
@@ -337,17 +325,20 @@ class teemboomCommentsClass{
 			return this.user
 		}
 		if (this.config.identification == '4'){
-			let markup = [
-				['header', 'Login', false],
-				['button', '<img src="http://teemboom.com/static/images/google_logo.png"> <p>Google</p>', {
-					'className': 'teemboom_popup_social', 
-					'style': {'background': '#4285F4', 'color': '#fff'}, 
-					'onclick': ()=>{this.identification4_sign_in('google')}}],
-				['button', '<img src="http://teemboom.com/static/favicon.ico"> <p>Teemboom</p>', 
-				{'className': 'teemboom_popup_social', 'style': {'background': '#4900e7', 'color': '#fff'}}]
-			]
-			this.new_popup(markup)
-			return false
+			if (!this.user){
+				let markup = [
+					['header', 'Login', false],
+					['button', '<img src="http://teemboom.com/static/images/google_logo.png"> <p>Google</p>', {
+						'className': 'teemboom_popup_social', 
+						'style': {'background': '#4285F4', 'color': '#fff'}, 
+						'onclick': ()=>{this.identification4_sign_in('google')}}],
+					// ['button', '<img src="http://teemboom.com/static/favicon.ico"> <p>Teemboom</p>', 
+					// {'className': 'teemboom_popup_social', 'style': {'background': '#4900e7', 'color': '#fff'}}]
+				]
+				this.new_popup(markup)
+				return false
+			}
+			return this.user
 		}
 		return false
 	}
@@ -369,10 +360,10 @@ class teemboomCommentsClass{
 		.then(res=>{return res.json()})
 		.then(json=>{
 			if (json.session_id){
-				localStorage.setItem('session_id', json.session_id)// test
-				// document.cookie = `session_id=${json.session_id}; path=/; SameSite=None; Secure`;
+				this.setCookie('session_id', json.session_id)
 				this.user = user
-				this.profile_avatar(this.user.username, document.getElementById(this.main_profile_id))
+				if (this.user.profile_pic) this.profile_pic(this.user.profile_pic, document.getElementById(this.main_profile_id))
+				else this.profile_avatar(this.user.username, document.getElementById(this.main_profile_id))
 			}
 		})
 	}
@@ -390,69 +381,20 @@ class teemboomCommentsClass{
 			this.identification()
 		})
 	}
+	setCookie(name, value) {
+	    document.cookie = `${name}=${value}; path=/; SameSite=None; Secure`;
+	    localStorage.setItem(name, value)
+	}
 	getCookie(name) {
-		
-		return localStorage.getItem(name) //test
 		let value = "; " + document.cookie;
 		let parts = value.split("; " + name + "=");
-		if (parts.length === 2) return parts.pop().split(";").shift();
-		return null;
+		let cookie_value;
+		if (parts.length === 2) cookie_value = parts.pop().split(";").shift();
+		if (!cookie_value) cookie_value = localStorage.getItem(name)
+		return cookie_value;
 	}
 	
 	identification(){
-		/*
-		get the page session from the browser storage, either localstorage or a cross-domain cookie, if not set user to not signed in
-		get the config level----------under each session stored in the db, have an object for each config level
-		send this to the server for authentication
-		based on the server response set the current user
-		EXAMPLE
-		server_object = {
-			level2: {username},
-			level3: {username, email, website...}
-			level4: {username, email, profile_pic, user_id}
-		}
-
-		---Basic
-		#NEW
-		Signin
-		Get identification details
-		eg. Username, email, config_level.
-		send to the server
-		server responds with session_id
-		store the id to the device
-		set this.user to {username, email}
-		#SERVER
-		receives Username, email, config_level=2.
-		creates session
-		stores username, email in config_level2
-		returns session_id
-		#OLD
-		Enters a site
-		Get session
-		send to server with config level
-		server returns stored user details
-
-
-		---Advanced
-		eg. google_id, teemboom_id, facebook_id, config_level
-		send to the server
-		server responds with session_id
-		store the id to the device
-		#SERVER
-		receives google_id, config_level=4
-		creates session
-		searches user database for user with google_id.
-		if not found create new user
-		store username, email, profile_pic in config_level4
-		return session_id,
-
-		#Old User.
-		Enters a site
-		Get session
-		Get config level
-		Send to server
-		Server responds with apporiate object
-		*/
 		let session_id = this.getCookie('session_id')
 		if (!session_id) return
 
@@ -464,10 +406,14 @@ class teemboomCommentsClass{
 		.then(res=>{return res.json()})
 		.then(json=>{
 			this.user = json
-			if (!this.user) this.user = false
-			if (this.user.username){
+			if (!this.user) {this.user = false}
+			if (this.user.profile_pic) {
+				this.profile_pic(this.user.profile_pic, document.getElementById(this.main_profile_id))
+			}
+			else if(this.user.username) {
 				this.profile_avatar(this.user.username, document.getElementById(this.main_profile_id))
 			}
+			
 		})
 	}
 	identification2_sign_in(value=false){
@@ -489,27 +435,25 @@ class teemboomCommentsClass{
 	}
 	identification4_sign_in(value){
 		if (value == 'google'){
-			function openGoogleSignInPopup() {
+			const openGoogleSignInPopup = () => {
 				const clientId = '360201050801-r60i04v2j4f83ilmus698vtgcq16a5ng.apps.googleusercontent.com';
-				const redirectUri = 'http://127.0.0.1:5000/google_auth_callback';
-				const state = crypto.randomUUID();
+				const redirectUri = `${this.teemboom_url}/google_auth_callback`;
 				
 				const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-					`client_id=${clientId}&` +
-					`redirect_uri=${redirectUri}&` +
+					`client_id=${encodeURIComponent(clientId)}&` +
+					`redirect_uri=${encodeURIComponent(redirectUri)}&` +
 					`response_type=code&` +
-					`scope=${'openid email profile'}&`+
-					`state=${state}`;
+					`scope=${encodeURIComponent('openid email profile')}&`;
 	
 				const popup = window.open(authUrl, 'google-signin', 'width=500,height=600');
 				
-				const interval = setInterval(() => {
-					if (popup.closed) {
-						clearInterval(interval);
-						// Optionally, you can make an AJAX call to check the authentication status
-						console.log('Popup closed. Handle authentication result here.');
-					}
-				}, 1000);
+				window.addEventListener('message', (event) => {
+					// Check the origin of the message for security purposes
+					// if (event.origin === 'https://your-popup-origin.com') {
+					// 	console.log('Received message from popup:', event.data);
+					// }
+					this.sign_in(event.data)
+				}, false);
 			}
 			openGoogleSignInPopup()
 		}
@@ -536,7 +480,8 @@ class teemboomCommentsClass{
 			}
 		}
 		this.new_popup(markup)
-		this.profile_avatar(this.user.username, document.getElementById('teemboom_profile_popup_pfp'))
+		if (this.user.profile_pic) this.profile_pic(this.user.profile_pic, document.getElementById('teemboom_profile_popup_pfp'))
+		else this.profile_avatar(this.user.username, document.getElementById('teemboom_profile_popup_pfp'))
 	}
 
 	live_chat(){
@@ -555,9 +500,6 @@ class teemboomCommentsClass{
 
 	socket_connections(){
 		// Functions to handle socket events
-		this.socket.on('joined', (data)=>{
-			console.log(data)
-		})
 		this.socket.on('display_comment', (data)=>{
 			this.add_comment(data)
 		})
@@ -566,6 +508,9 @@ class teemboomCommentsClass{
 		})
 		this.socket.on('display_like', (data)=>{
 			this.add_like(data)
+		})
+		this.socket.on('display_dislike', (data)=>{
+			this.add_dislike(data)
 		})
 	}
 
@@ -576,6 +521,13 @@ class teemboomCommentsClass{
 		div.innerText = name[0].toUpperCase()
 		div.style.background = '#'+random_hex_color
 		div.style.color = '#ffffff'
+	}
+	profile_pic(url, div){
+		let img = document.createElement('img')
+		img.src = url
+		div.innerHTML = ''
+		div.appendChild(img)
+		div.classList.add('teemboom_profile_pic')
 	}
 
 	report_item(reason, comment_id, reply_id){
