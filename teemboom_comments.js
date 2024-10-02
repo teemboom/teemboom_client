@@ -453,6 +453,7 @@ class teemboomCommentsClass{
 					// 	console.log('Received message from popup:', event.data);
 					// }
 					this.sign_in(event.data)
+					this.popup_close()
 				}, false);
 			}
 			openGoogleSignInPopup()
