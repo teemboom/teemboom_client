@@ -15,11 +15,12 @@ function teemboom_comments_load(){
 	fetch(`${teemboom_url}/teemboom_config`, {
 		'headers': {'Content-type': 'application/json'},
 		'method': 'POST',
-		'body': JSON.stringify({'id': page_url})
+		'body': JSON.stringify({'page_id': page_url})
 	})
 	.then(res=>{return res.json()})
-	.then(json=>{
-		config = json
+	.then(response=>{
+		if (!response.status) return
+		config = response.data
 		config.teemboom_url = teemboom_url
 		let theme_css = document.createElement('link')
 		theme_css.setAttribute('href', `${teemboom_url}/static/app/dist/theme/${config.theme}/teemboom_theme.css`)
@@ -152,12 +153,13 @@ class teemboomCommentsClass{
 		fetch(`${this.teemboom_url}/teemboom_comments`, {
 			'headers': {'Content-type': 'application/json'},
 			'method': 'POST',
-			'body': JSON.stringify({'id': this.page_url})
+			'body': JSON.stringify({'page_id': this.page_url})
 		})
 		.then(res=>{return res.json()})
 		.then(json=>{
-			for (let data of json.comments){
-				this.add_comment(data, json.comments_no)
+			if (!json.status) return
+			for (let data of json.data.comments){
+				this.add_comment(data, json.data.comments_no)
 			}
 		})
 	}
@@ -175,13 +177,14 @@ class teemboomCommentsClass{
 			'body': JSON.stringify({
 				'content': comment, 
 				'user': user, 
-				'id': this.page_url
+				'page_id': this.page_url
 			})
 		})
 		.then((res)=>{return res.json()})
 		.then((json)=>{
+			if (!json.status) return
 			if (this.config.live_chat){
-				this.socket.emit('spread_comment', {'room': this.page_url, 'comment': json})
+				this.socket.emit('spread_comment', {'room': this.page_url, 'comment': json.data})
 			}else{
 				if (this.config.auth_comments) {
 					let markup = [
@@ -189,7 +192,7 @@ class teemboomCommentsClass{
 					]
 					this.new_popup(markup)
 				}
-				else this.add_comment(json)
+				else this.add_comment(json.data)
 			}
 		})
 	}
@@ -207,17 +210,22 @@ class teemboomCommentsClass{
 			'body': JSON.stringify({
 				'content': reply,
 				'user': this.user,
-				'id': this.page_url,
+				'page_id': this.page_url,
 				'comment_id': comment_id
 			})
 		})
 		.then(res=>{return res.json()})
 		.then(json=>{
+			if (!json.status) return
 			if (this.config.live_chat){
-				this.socket.emit('spread_reply', {'room': this.page_url, 'comment': json})
+				this.socket.emit('spread_reply', {'room': this.page_url, 'comment': json.data})
 			}else{
-				json.comment_id = comment_id
-				this.add_reply(json)
+				if (this.config.auth_comments) {
+					let markup = [
+						['header', 'Thank you! <br><br> Your reply has been submitted and will be reviewed.'],
+					]
+					this.new_popup(markup)
+				} else	this.add_reply(json.data)
 			}
 		})
 	}
@@ -236,10 +244,11 @@ class teemboomCommentsClass{
 		})
 		.then(res=>{return res.json()})
 		.then(json=>{
+			if (!json.status) return
 			if (this.config.live_chat){
-				this.socket.emit('spread_like', {'room': this.page_url, 'data': json})
+				this.socket.emit('spread_like', {'room': this.page_url, 'data': json.data})
 			}else{
-				this.add_like(json)
+				this.add_like(json.data)
 			}
 		})
 	}
@@ -258,10 +267,11 @@ class teemboomCommentsClass{
 		})
 		.then(res=>{return res.json()})
 		.then(json=>{
+			if (!json.status) return
 			if (this.config.live_chat){
-				this.socket.emit('spread_dislike', {'room': this.page_url, 'data': json})
+				this.socket.emit('spread_dislike', {'room': this.page_url, 'data': json.data})
 			}else{
-				this.add_dislike(json)
+				this.add_dislike(json.data)
 			}
 		})
 	}
