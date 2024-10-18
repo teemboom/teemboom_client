@@ -1,6 +1,6 @@
 function teemboom_comments_load(){
 	let page_url = `${location.host}${location.pathname}`;
-	let teemboom_url = 'https://teemboom.com'
+	let teemboom_url = 'http://teemboom.com'
 	let config;
 
 	if (location.host.startsWith('localhost') || location.host.startsWith('127.0.0.') || location.host.startsWith('file')){
@@ -113,36 +113,21 @@ class teemboomCommentsClass{
 	}
 
 	admin_config(){	
-		let rules = `
-		.teemboom_root{
-			--teemboom-main: ${this.config.style.main};
-			--teemboom-comments: ${this.config.style.comments};
-			--teemboom-outline: ${this.config.style.outline};
-			--teemboom-text: ${this.config.style.text};
-			--teemboom-shadow: ${this.config.style.shadow};
-			--teemboom-metrics_background: ${this.config.style.metrics_background};
-			--teemboom-metrics_text: ${this.config.style.metrics_text};
-			--teemboom-send_comment_background: ${this.config.style.send_comment_background};
-			--teemboom-send_comment_text: ${this.config.style.send_comment_text};
-			--teemboom-send_comment_outline: ${this.config.style.send_comment_outline};
-			--teemboom-send_comment_shadow: ${this.config.style.send_comment_shadow};
-			--teemboom-comments_background: ${this.config.style.comments_background};
-			--teemboom-comment_title: ${this.config.style.comment_title};
-			--teemboom-comment_title_text: ${this.config.style.comment_title_text};
-			--teemboom-replies_background: ${this.config.style.replies_background};
-			--teemboom-send_reply_background: ${this.config.style.send_reply_background};
-			--teemboom-send_reply_text: ${this.config.style.send_reply_text};
-			--teemboom-reply: ${this.config.style.reply};
-			--teemboom-reply_text: ${this.config.style.reply_text};
-			--teemboom-profile_outline: ${this.config.style.profile_outline};
-			--teemboom-like_color: ${this.config.style.like_color};
-			--teemboom-dislike_color: ${this.config.style.dislike_color};
-			--teemboom-font_size: ${this.config.style.font_size}px;
-			--teemboom-font_family: ${this.config.style.font_family}, Helvetica , Arial, sans-serif;
+		let style_rule = '.teemboom_root{'
+		let mainColors = this.config.style.colors.main
+		for (let style in mainColors){
+			style_rule += `--teemboom-${style}: ${mainColors[style]};`
 		}
-		`
+		let font = this.config.style.font.normal
+		for (let style in font){
+			let px = ''
+			if (style == 'font_size') px = 'px'
+			style_rule += `--teemboom-${style}: ${font[style]}${px};`
+		}
+		style_rule += '}'
+		
 		let styleElement = document.createElement('style')
-		styleElement.appendChild(document.createTextNode(rules))
+		styleElement.appendChild(document.createTextNode(style_rule))
 		document.head.appendChild(styleElement)
 		if (this.config.live_chat) {
 			this.live_chat()
