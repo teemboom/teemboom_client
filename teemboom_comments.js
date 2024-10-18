@@ -1,6 +1,6 @@
 function teemboom_comments_load(){
 	let page_url = `${location.host}${location.pathname}`;
-	let teemboom_url = 'https://teemboom.com'
+	let teemboom_url = window.location.protocol + '//teemboom.com'
 	let config;
 
 	if (location.host.startsWith('localhost') || location.host.startsWith('127.0.0.') || location.host.startsWith('file')){
