@@ -155,6 +155,7 @@ class teemboomCommentsClass{
 		if (comment == '' || /[A-Za-z0-9]/.test(comment) == false || comment.length > 1000) return;
 		let user = this.get_user()
 		if (!user) return
+		console.log(user)
 		comment_box.value = ''
 		fetch(`${this.teemboom_url}/submit_comment`, {
 			'headers': {'Content-type': 'application/json'},
