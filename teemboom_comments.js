@@ -155,7 +155,6 @@ class teemboomCommentsClass{
 		if (comment == '' || /[A-Za-z0-9]/.test(comment) == false || comment.length > 1000) return;
 		let user = this.get_user()
 		if (!user) return
-		console.log(user)
 		comment_box.value = ''
 		fetch(`${this.teemboom_url}/submit_comment`, {
 			'headers': {'Content-type': 'application/json'},
@@ -291,7 +290,7 @@ class teemboomCommentsClass{
 			return this.user
 		}
 		if (this.config.identification == '2'){
-			if (!this.user){ // If the user is not signed in
+			if (!this.user || !this.user.username){ // If the user is not signed in
 				let markup = [
 					['header', 'Enter Your Username', false],
 					['input', false, {
@@ -306,7 +305,7 @@ class teemboomCommentsClass{
 			return this.user
 		}
 		if (this.config.identification == '3'){
-			if (!this.user || !this.user){ // If the user is not signed in
+			if (!this.user || !this.user.username){ // If the user is not signed in
 				let markup = [
 					['label', 'Username', false],
 					['input', false, {'placeholder': 'Username', 'id': 'teemboom_lev3_username'}],
@@ -321,15 +320,13 @@ class teemboomCommentsClass{
 			return this.user
 		}
 		if (this.config.identification == '4'){
-			if (!this.user){
+			if (!this.user || !this.user.username){
 				let markup = [
 					['header', 'Login', false],
 					['button', '<img src="http://teemboom.com/static/images/google_logo.png"> <p>Google</p>', {
 						'className': 'teemboom_popup_social', 
 						'style': {'background': '#4285F4', 'color': '#fff'}, 
 						'onclick': ()=>{this.identification4_sign_in('google')}}],
-					// ['button', '<img src="http://teemboom.com/static/favicon.ico"> <p>Teemboom</p>', 
-					// {'className': 'teemboom_popup_social', 'style': {'background': '#4900e7', 'color': '#fff'}}]
 				]
 				this.new_popup(markup)
 				return false
