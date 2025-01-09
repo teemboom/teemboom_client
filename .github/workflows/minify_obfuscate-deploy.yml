@@ -42,7 +42,7 @@ jobs:
           cp ../dist/obfuscated.js .  # Copy the obfuscated JS to the root of gh-pages folder
           git add .
           git commit -m "Deploy obfuscated JS to GitHub Pages"
-          git push origin gh-pages  # Push to the gh-pages branch
+          git push   # Push to the gh-pages branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
