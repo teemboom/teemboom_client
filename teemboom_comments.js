@@ -444,6 +444,8 @@ class teemboomCommentsClass{
 		if (display){
 			iframe.style.width = '400px'
 			iframe.style.height = '500px'
+			iframe.style.maxWidth = '90vw'
+			iframe.style.maxHeight = '90vh'
 			iframe.style.position = 'fixed'
 			iframe.style.left = '50%'
 			iframe.style.top = '50%'
