@@ -37,7 +37,7 @@ jobs:
 
       - name: Deploy to GitHub Pages
         run: |
-          git clone --depth 1 https://github.com/${{ github.repository }} gh-pages  # Clone the repository
+          git clone https://github.com/${{ github.repository }} gh-pages  # Clone the repository
           cd gh-pages
           cp ../dist/obfuscated.js .  # Copy the obfuscated JS to the root of gh-pages folder
           git add .
