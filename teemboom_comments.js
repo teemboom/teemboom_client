@@ -306,9 +306,6 @@ class teemboomCommentsClass{
 		this.socket.on('display_comment', (data)=>{
 			this.add_comment(data)
 		})
-		this.socket.on('display_reply', (data)=>{
-			this.add_reply(data)
-		})
 		this.socket.on('display_like', (data)=>{
 			this.add_like(data)
 		})
@@ -435,7 +432,7 @@ class teemboomCommentsClass{
 	}
 
 	logout(){
-		this.createIframe(`${this.auth_api}/comments/logout?level=${this.config.identification}`)
+		this.createIframe(`${this.auth_api}/comments/logout?level=${this.config.identification}`, false)
 	}
 
 	createIframe(url, display=true){
