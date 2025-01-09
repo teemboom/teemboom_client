@@ -43,4 +43,6 @@ jobs:
           git add .
           git commit -m "Deploy obfuscated JS to GitHub Pages"
           git push origin main  # Push to the `main` branch (root folder of GitHub Pages)
+       env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
