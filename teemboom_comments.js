@@ -266,21 +266,21 @@ class teemboomCommentsClass{
 	profile_dropdown(){
 		let markup = [
 			['div', false, {'id': 'teemboom_profile_popup_pfp'}],
-			['h6', this.user.username, false],
+			['h6', this.user ? this.user.username : '', false],
 			['button', 'Log Out', {'onclick': ()=>{
 				this.logout()
 			}}]
 		]
 		if (!this.user || !this.user.username){
-			if (this.config.identification == 1){
-				markup[1][1] = 'Anonymous. No authentication requried'
-				markup.pop()
-			}else{
-				markup[1][1] = 'Not Signed in'
-				markup[2] = ['button', 'Sign in', {'onclick': ()=>{
-					this.get_user()
-				}}];
-			}
+			// if (this.config.identification == 3){
+			// 	markup[1][1] = 'Anonymous. No authentication requried'
+			// 	markup.pop()
+			// }else{}
+			markup[1][1] = 'Not Signed in'
+			markup[2] = ['button', 'Sign in', {'onclick': ()=>{
+				this.get_user()
+			}}];
+			
 		}
 		this.new_popup(markup)
 		if (this.user.profile_pic) this.profile_pic(this.user.profile_pic, document.getElementById('teemboom_profile_popup_pfp'))
