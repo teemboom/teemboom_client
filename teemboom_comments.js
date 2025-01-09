@@ -450,7 +450,7 @@ class teemboomCommentsClass{
 			iframe.style.left = '50%'
 			iframe.style.top = '50%'
 			iframe.style.transform = 'translate(-50%, -50%)'
-			iframe.style.zIndex = 999
+			iframe.style.zIndex = 99999
 			let cover = document.createElement('div')
 			cover.style.width = '100vw'
 			cover.style.height = '100vh'
