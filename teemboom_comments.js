@@ -411,6 +411,7 @@ class teemboomCommentsClass{
 			// After every data recieved, close the iframe
 			let iframes = document.getElementsByClassName('teemboom_iframe')
 			for (let p of iframes){p.remove()}
+			this.popup_close()
 		});	
 	}
 
