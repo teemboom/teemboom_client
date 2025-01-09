@@ -24,7 +24,7 @@ jobs:
 
       - name: Minify JavaScript
         run: |
-          npx terser *.js --compress --mangle --output dist/minified.js  # Minify JS from src to dist/minified.js
+          npx terser prod/*.js --compress --mangle --output dist/minified.js  # Minify JS from src to dist/minified.js
 
       - name: Obfuscate JavaScript
         run: |
