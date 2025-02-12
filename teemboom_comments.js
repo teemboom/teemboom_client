@@ -1,7 +1,7 @@
 function teemboom_comments_load(){
 	let page_url = `${location.host}${location.pathname}`;
-	let theme_url = 'http://comment-themes.teemboom.com'
-	let comments_api = 'http://comments.teemboom.com'
+	let theme_url = 'https://comment-themes.teemboom.com'
+	let comments_api = 'https://comments.teemboom.com'
 	let config;
 	
 
@@ -61,8 +61,8 @@ class teemboomCommentsClass{
 	main_div;
 	session_id = null
 	user = false
-	comments_api = 'http://comments.teemboom.com'
-	auth_api = 'http://auth.teemboom.com'
+	comments_api = 'https://comments.teemboom.com'
+	auth_api = 'https://auth.teemboom.com'
 	default_hex = ["FFCC66", "99CCCC", "FF6666", "CC99FF", "4285F4", "FF6666", "66CCCC", "FF9966", "5555FF", "66CC99"]
 
 	load(){
