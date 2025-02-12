@@ -47,6 +47,11 @@ function teemboomChatInit(args = false) {
 			'profile_pic': userProfilePicture
 		}
 	}
+	fetch(`${chat_api}/update_user`, {
+		'headers': { 'Content-type': 'application/json' },
+		'method': 'POST',
+		'body': JSON.stringify({ 'app_id': appID, 'user': roomDetails.user })
+	})
 	if (recipientUserID) { // If a reciepient is defined, Make sure all details esixt
 		if (!recipientUsername) { console.error('Teemboom Chat: Missing recipient username'); return }
 		roomDetails['recipient'] = {
@@ -91,12 +96,18 @@ class teemboomChatClass {
 		this.populate = obj.populate
 		this.addMessage = obj.addMessage
 		this.addUserConversation = obj.addUserConversation
+		this.updateUserConversation = obj.updateUserConversation
+		this.updateMessage = obj.updateMessage
+		this.removeMessage = obj.removeMessage
+		this.messageBoxId = obj.messageBoxId
 		this.load()
 	}
 
 	page_url = `${location.host}${location.pathname}`;
 	socket = false;
+	pending_socket_requests = []
 	currentRoom = null;
+	currentRoomMessages = null;
 	rooms = null;
 	app_id = null;
 	message_date = null
@@ -104,52 +115,22 @@ class teemboomChatClass {
 	user = false
 	chat_api = 'http://chat.teemboom.com'
 	auth_api = 'http://auth.teemboom.com'
-	default_hex = ["FFCC66", "99CCCC", "FF6666", "CC99FF", "4285F4", "FF6666", "66CCCC", "FF9966", "5555FF", "66CC99"]
-
+	
 	load() {
-
 		this.main_div = document.getElementById('teemboom_chat')
-		if (this.main_div) {
-			this.main_div.className = 'teemboom_chat_root'
-		} else if (document.getElementById('teemboom_chat_popup')) {
-			let popup_button = document.getElementById('teemboom_chat_popup')
-			let cover_div;
-			let cover_div_state = false
-			const popup_toogle = () => {
-				if (cover_div_state) { cover_div.style.display = 'none'; cover_div_state = false }
-				else { cover_div.style.display = 'block'; cover_div_state = true }
-			}
-			popup_button.addEventListener('click', popup_toogle)
-			cover_div = document.createElement('section')
-			cover_div.id = 'teemboom_chat_popup'
-			cover_div.className = 'teemboom_chat_root'
-			let popup_close = document.createElement('div')
-			popup_close.id = 'teemboom_popup_close'
-			popup_close.innerHTML = '<p>X</p>'
-			popup_close.addEventListener('click', popup_toogle)
-			cover_div.appendChild(popup_close)
-			this.main_div = document.createElement('div')
-			this.main_div.id = 'teemboom_chat'
-			cover_div.appendChild(this.main_div)
-			document.body.appendChild(cover_div)
-		}
-		else {
-			this.main_div = document.createElement('section')
-			this.main_div.id = 'teemboom_chat'
-			this.main_div.className = 'teemboom_chat_root'
-			document.body.appendChild(this.main_div)
-		}
+		if (!this.main_div) return
 		this.admin_config()
 		this.populate()
 		this.loadUserRooms()
 	}
 
 	admin_config() {
-		let style_rule = '.teemboom_chat_root{'
-		let mainColors = this.config.style.colors.main
-		for (let style in mainColors) {
-			style_rule += `--teemboom-${style}: ${mainColors[style]};`
+		let style_rule = '#teemboom_chat{'
+		let lightMode = this.config.style.colors.light
+		for (let style in lightMode) {
+			style_rule += `--teemboom-${style}: ${lightMode[style]};`
 		}
+
 		let font = this.config.style.font.normal
 		for (let style in font) {
 			let px = ''
@@ -174,74 +155,81 @@ class teemboomChatClass {
 				'user_id': this.user.id
 			})
 		})
-			.then(res => { return res.json() })
-			.then(async (response) => {
-				if (!response.status) { console.error('Teemboom chat: ' + response.message) }
+		.then(res => { return res.json() })
+		.then(async (response) => {
+			if (!response.status) { console.error('Teemboom chat: ' + response.message) }
 
-				// Complie the recieved rooms data into a more useable format
-				function complie_rooms(data) {
-					return data.reduce((acc, room) => {
-						const userObject = room.users.reduce((userAcc, user) => {
-							userAcc[user._id] = user;
-							return userAcc;
-						}, {});
-						acc[room._id] = {
-							...room,
-							users: userObject,
-						};
-						return acc;
+			// Complie the recieved rooms data into a more useable format
+			function complie_rooms(data) {
+				return data.reduce((acc, room) => {
+					const userObject = room.users.reduce((userAcc, user) => {
+						userAcc[user._id] = user;
+						return userAcc;
 					}, {});
-				}
-				this.rooms = complie_rooms(response.data)
+					acc[room._id] = {
+						...room,
+						users: userObject,
+					};
+					return acc;
+				}, {});
+			}
+			this.rooms = complie_rooms(response.data)
 
 
-				// If a reciepient chat user was defined, this means we want to specifically start
-				// or continue a chat with someone.
-				if (this.roomDetails.recipient) {
-					// Check if a such a room already exists in the returned data, this will save latency
-					let room_found = false
-					for (let room_id in this.rooms) {
-						// If such a room exists
-						if (this.roomGetUser(room_id, this.user.id) && this.roomGetUser(room_id, this.roomDetails.recipient.id)) {
-							const index = response.data.findIndex(item => item._id === room_id);
-							if (index !== 0) { // if element is not the first, make it the first
-								const [element] = response.data.splice(index, 1); // Remove the element from its current position
-								response.data.unshift(element); // Add the element to the beginning of the array
-							}
-							room_found = true
-							break;
+			// If a reciepient chat user was defined, this means we want to specifically start
+			// or continue a chat with someone.
+			if (this.roomDetails.recipient) {
+				// Check if a such a room already exists in the returned data, this will save latency
+				let room_found = false
+				for (let room_id in this.rooms) {
+					// If such a room exists by checking if a room contains both users
+					if (this.roomGetUser(room_id, this.user.id) && this.roomGetUser(room_id, this.roomDetails.recipient.id)) {
+						const index = response.data.findIndex(item => item._id === room_id);
+						if (index !== 0) { // if element is not the first, make it the first
+							const [element] = response.data.splice(index, 1); // Remove the element from its current position
+							response.data.unshift(element); // Add the element to the beginning of the array
 						}
+						room_found = true
+						break;
 					}
-					if (!room_found) {
-						await fetch(`${this.chat_api}/create_room`, {
-							'headers': { 'Content-type': 'application/json' },
-							'method': 'POST',
-							'body': JSON.stringify(this.roomDetails)
-						})
-							.then(res => { return res.json() })
-							.then(json => {
-								if (!json.status) {
-									console.error('Teemboom Chat: ' + json.message);
-									return
-								}
-								response.data.unshift(json.data)
-								this.rooms = complie_rooms(response.data)
+				}
+				if (!room_found) {
+					await fetch(`${this.chat_api}/create_room`, {
+						'headers': { 'Content-type': 'application/json' },
+						'method': 'POST',
+						'body': JSON.stringify(this.roomDetails)
+					})
+						.then(res => { return res.json() })
+						.then(json => {
+							if (!json.status) {
+								console.error('Teemboom Chat: ' + json.message);
+								return
+							}
+							response.data.unshift(json.data)
+							this.rooms = complie_rooms(response.data)
+							let otherUser = this.roomGetOtherUser(json.data._id, this.user.id)
+							this.pending_socket_requests.push({
+								'new_room': { 'room': this.app_id+otherUser._id, 'room_data': json.data }
 							})
-					}
+						})
 				}
-				this.currentRoom = response.data[0]._id
-				for (let room of response.data) {
-					this.addUserConversation(room)
-				}
-				this.loadRoomMessages()
+			}
+			this.currentRoom = response.data[0]._id
+			for (let room of response.data) {
+				this.addUserConversation(room)
+			}
+			this.loadRoomMessages()
 
-				this.live_chat()
-			})
+			this.live_chat()
+		})
 	}
 
 	loadRoomMessages(room_id = false) {
 		this.message_date = null
-		if (room_id) this.currentRoom = room_id
+		if (room_id){
+			if (room_id === this.currentRoom) return
+			this.currentRoom = room_id
+		} 
 		document.getElementById('teemboom_messages').innerHTML = ''
 		fetch(`${this.chat_api}/get_room_messages`, {
 			'headers': { 'Content-type': 'application/json' },
@@ -258,9 +246,12 @@ class teemboomChatClass {
 					return
 				}
 				let messages = res.data
+				this.currentRoomMessages = messages
 				for (let message of messages) {
 					this.addMessage(message)
+					this.scrollToBottom(this.messageBoxId, true, 'instant')
 				}
+				this.updateUserConversation({'room_id': this.currentRoom}, true)
 			})
 	}
 
@@ -269,7 +260,7 @@ class teemboomChatClass {
 		let message = inputElement.value
 		if (message === '' || /[A-Za-z0-9]/.test(message) == false) return;
 		inputElement.value = ''
-
+		let reply_to = inputElement.dataset.reply_to
 		fetch(`${this.chat_api}/new_message`, {
 			'headers': { 'Content-type': 'application/json' },
 			'method': 'POST',
@@ -277,29 +268,100 @@ class teemboomChatClass {
 				'app_id': this.app_id,
 				'room_id': this.currentRoom,
 				'user_id': this.user.id,
-				'content': message
+				'content': message,
+				'reply_to': reply_to
 			})
 		})
 			.then(res => { return res.json() })
 			.then(res => {
 				if (!res.status) {
-					console.error('Teemboom chat: ' + res.message)
 					return
 				}
-				this.socket.emit('spread_message', { 'room': this.app_id + this.currentRoom, 'message': res.data })
+				this.socket.emit('spread_message', { 'room': this.getSocketRoomId(res.data.room_id), 'message': res.data })
 			})
+	}
+	editMessage(message_id, content){
+		if (content === '' || /[A-Za-z0-9]/.test(content) == false) return;
+		fetch(`${this.chat_api}/edit_message`, {
+			'headers': { 'Content-type': 'application/json' },
+			'method': 'POST',
+			'body': JSON.stringify({
+				'app_id': this.app_id,
+				'message_id': message_id,
+				'user_id': this.user.id,
+				'content': content
+			})
+		})
+		.then(res => {return res.json()})
+		.then(res => {
+			if (!res.status){
+				return
+			}
+			this.socket.emit('edit_message', {
+				'room': this.getSocketRoomId(this.currentRoom), 
+				'data': res.data})
+		})
+	}
+	deleteMessage(message_id){
+		fetch(`${this.chat_api}/delete_message`, {
+			'headers': { 'Content-type': 'application/json' },
+			'method': 'POST',
+			'body': JSON.stringify({
+				'app_id': this.app_id,
+				'message_id': message_id,
+				'user_id': this.user.id,
+			})
+		})
+		.then(res => {return res.json()})
+		.then(res => {
+			if (!res.status){
+				return
+			}
+			this.socket.emit('delete_message', {
+				'room': this.getSocketRoomId(this.currentRoom), 
+				'data': res.data})
+		})
+	}
+	newUnreadMessage(room_id){
+		fetch(`${this.chat_api}/new_unread_message`, {
+			'headers': {'Content-type': 'application/json'},
+			'method': 'POST',
+			'body': JSON.stringify({
+				'app_id': this.app_id,
+				'room_id': room_id
+			})
+		})
+	}
+	clearUnreadMessaeges(room_id){
+		fetch(`${this.chat_api}/clear_unread_messages`, {
+			'headers': {'Content-type': 'application/json'},
+			'method': 'POST',
+			'body': JSON.stringify({
+				'app_id': this.app_id,
+				'room_id': room_id
+			})
+		})
 	}
 
 
-
-
+	getSocketUserId(){
+		return this.app_id + this.user.id
+	}
+	getSocketRoomId(room_id){
+		return this.app_id+room_id
+	}
 
 	live_chat() {
 		// Load the socketio client script
 		let socketio_script = document.createElement('script');
 		socketio_script.onload = () => {
 			this.socket = io('http://socket.teemboom.com');
-			this.socket.emit('join_room', { 'room': this.app_id + this.currentRoom })
+			let rooms = []
+			for (let key of Object.keys(this.rooms)){
+				rooms.push(this.getSocketRoomId(key))
+			}
+			rooms.push(this.getSocketUserId())
+			this.socket.emit('join_rooms', { 'rooms': rooms})
 			this.socket_connections()
 		}
 		socketio_script.setAttribute('src', 'https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js')
@@ -309,13 +371,38 @@ class teemboomChatClass {
 	}
 
 	socket_connections() {
+		// Send pending requests
+		this.pending_socket_requests.forEach(request => {
+			const eventName = Object.keys(request)[0]; 
+			const eventData = request[eventName];
+			this.socket.emit(eventName, eventData);
+		});
+
 		// Functions to handle socket events
 		this.socket.on('display_message', (data) => {
-			this.addMessage(data, this.user.id)
+			if (data.room_id == this.currentRoom){
+				this.currentRoomMessages.push(data)
+				this.addMessage(data, this.user.id)
+				this.updateUserConversation(data, false, false)
+			}else{
+				this.updateUserConversation(data)
+			}
 		})
-		// this.socket.on('joined', (data) => {
-		// 	console.log(data)
-		// })
+		this.socket.on('edit_message', (data) => {
+			this.updateMessage(data.message_id, data.content)
+		})
+		this.socket.on('delete_message', (data) => {
+			this.removeMessage(data.message_id)
+		})
+		this.socket.on('create_new_room', (data) => {
+			this.rooms[data._id] = data
+			this.socket.emit('join_rooms', {'rooms': [this.getSocketRoomId(data._id)]})
+			this.addUserConversation(data, true)
+		})
+	}
+
+	findRoomMessage(message_id){
+		return this.currentRoomMessages.find(msg => msg._id === message_id)
 	}
 
 	roomGetUser(room_id, userId = false) {
@@ -324,6 +411,7 @@ class teemboomChatClass {
 		if (!userId) userId = this.user.id
 		return Object.values(room.users).find(user => user._id === userId) || null;
 	}
+	
 	roomGetOtherUser(room_id, userId = false) {
 		// find the user in the room whoose id is not equal to the user_id.
 		// helps if you know one user but don't know the other.
@@ -331,7 +419,6 @@ class teemboomChatClass {
 		if (!userId) userId = this.user.id
 		return Object.values(room.users).find(user => user._id !== userId) || null;
 	}
-
 
 	formatTo12Hour(date) {
 		date = new Date(date)
@@ -349,38 +436,17 @@ class teemboomChatClass {
 			day: 'numeric',
 		});
 	}
-
-	createIframe(url, display = true) {
-		const iframe = document.createElement('iframe');
-		iframe.src = url;
-		iframe.classList.add('teemboom_iframe')
-		if (display) {
-			iframe.style.width = '400px'
-			iframe.style.height = '500px'
-			iframe.style.maxWidth = '90vw'
-			iframe.style.maxHeight = '90vh'
-			iframe.style.position = 'fixed'
-			iframe.style.left = '50%'
-			iframe.style.top = '50%'
-			iframe.style.transform = 'translate(-50%, -50%)'
-			iframe.style.zIndex = 99999
-			let cover = document.createElement('div')
-			cover.style.width = '100vw'
-			cover.style.height = '100vh'
-			cover.style.position = 'fixed'
-			cover.style.top = '0px';
-			cover.style.left = '0px'
-			cover.style.background = 'transparent'
-			cover.style.zIndex = 998
-			cover.addEventListener('click', () => {
-				iframe.remove()
-				cover.remove()
-			})
-			this.main_div.appendChild(cover)
-		} else {
-			iframe.style.display = 'none'
+	scrollToBottom(id, scrollDownEvenIfNotAtBottom=false, behavior='smooth') {
+		let div = document.getElementById(id);
+		let isAtBottom = div.scrollHeight - div.scrollTop - 300 <= div.clientHeight;
+		if (isAtBottom || scrollDownEvenIfNotAtBottom) {
+			div.scrollTo({
+				top: div.scrollHeight,
+				behavior: behavior
+			});
+		}else{
+			return false		
 		}
-		this.main_div.appendChild(iframe)
-		return iframe
+		return true
 	}
 }
