@@ -1,6 +1,6 @@
 function teemboom_comments_load(){
 	let page_url = `${location.host}${location.pathname}`;
-	let theme_url = 'http://themes.teemboom.com'
+	let theme_url = 'http://comment-themes.teemboom.com'
 	let comments_api = 'http://comments.teemboom.com'
 	let config;
 	
