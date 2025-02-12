@@ -1,6 +1,6 @@
 function teemboomChatInit(args = false) {
-	let theme_url = 'http://chat-themes.teemboom.com'
-	let chat_api = 'http://chat.teemboom.com'
+	let theme_url = 'https://chat-themes.teemboom.com'
+	let chat_api = 'https://chat.teemboom.com'
 	let config;
 	let domainName = `${window.location.protocol}//${window.location.host}`
 	let appID = null
@@ -113,8 +113,8 @@ class teemboomChatClass {
 	message_date = null
 	main_div;
 	user = false
-	chat_api = 'http://chat.teemboom.com'
-	auth_api = 'http://auth.teemboom.com'
+	chat_api = 'https://chat.teemboom.com'
+	auth_api = 'https://auth.teemboom.com'
 	
 	load() {
 		this.main_div = document.getElementById('teemboom_chat')
@@ -355,7 +355,7 @@ class teemboomChatClass {
 		// Load the socketio client script
 		let socketio_script = document.createElement('script');
 		socketio_script.onload = () => {
-			this.socket = io('http://socket.teemboom.com');
+			this.socket = io('https://socket.teemboom.com');
 			let rooms = []
 			for (let key of Object.keys(this.rooms)){
 				rooms.push(this.getSocketRoomId(key))
