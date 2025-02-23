@@ -187,7 +187,7 @@ class teemboomCommentsClass{
 			if (this.config.live_chat){
 				this.socket.emit('spread_comment', {'room': this.page_url, 'comment': json.data})
 			}else{
-				if (this.config.auth_comments) {
+				if (this.config.comment_approval) {
 					let markup = [
 						['header', 'Thank you! <br><br> Your comment has been submitted and will be reviewed.'],
 					]
