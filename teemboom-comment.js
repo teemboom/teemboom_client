@@ -4754,7 +4754,8 @@ var clear_land = (function (exports) {
 	        return "http://localhost:5003";
 	      }
 	    }
-	    return "https://comments.teemboom.com";
+	    console.log("Using default API URL:", "https://comments-api.teemboom.com");
+	    return "https://comments-api.teemboom.com";
 	  }, [apiUrl]);
 
 	  // Initialize API and fetch config
