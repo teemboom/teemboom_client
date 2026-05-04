@@ -518,6 +518,7 @@ var clear_land = (function (exports) {
 	  constructor() {
 	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
 	    this.apiUrl = (options.apiUrl || TEEMBOOM_API_BASE_URL).replace(/\/$/, "");
+	    console.log("Using Comment API URL:", this.apiUrl);
 	  }
 
 	  /**
