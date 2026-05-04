@@ -502,13 +502,14 @@ var clear_land = (function (exports) {
 	  });
 	}
 	function getDefaultApiUrl() {
-	  if (typeof window !== "undefined") {
-	    const host = window.location.host || "";
-	    if (host.startsWith("localhost") || host.startsWith("127.0.0.")) {
-	      return "http://localhost:5003";
-	    }
-	  }
-	  return "https://comments-api.teemboom.com";
+	  // if (typeof window !== "undefined") {
+	  //   const host = window.location.host || "";
+	  //   if (host.startsWith("localhost") || host.startsWith("127.0.0.")) {
+	  //     return "http://localhost:5003";
+	  //   }
+	  // }
+
+	  return "http://comments-api.teemboom.com";
 	}
 	const TEEMBOOM_API_BASE_URL = getDefaultApiUrl();
 	const USER_ID_STORAGE_KEY = "teemboom_user_id";
@@ -806,15 +807,22 @@ var clear_land = (function (exports) {
 	    };
 	  }
 	  getDefaultWsUrl() {
-	    if (typeof window !== "undefined") {
-	      const host = window.location.host || "";
-	      const hostname = window.location.hostname || "";
-	      if (host.startsWith("localhost") || host.startsWith("127.0.0.") || hostname === "::1") {
-	        return "ws://localhost:5900";
-	      }
-	      return "ws://socket.teemboom.com";
-	    }
-	    return "ws://localhost:5900";
+	    // if (typeof window !== "undefined") {
+	    //   const host = window.location.host || "";
+	    //   const hostname = window.location.hostname || "";
+
+	    //   if (
+	    //     host.startsWith("localhost") ||
+	    //     host.startsWith("127.0.0.") ||
+	    //     hostname === "::1"
+	    //   ) {
+	    //     return "ws://localhost:5900";
+	    //   }
+
+	    //   return "ws://socket.teemboom.com";
+	    // }
+
+	    return "ws://socket.teemboom.com";
 	  }
 
 	  /**
