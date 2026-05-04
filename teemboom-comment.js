@@ -509,7 +509,7 @@ var clear_land = (function (exports) {
 	  //   }
 	  // }
 
-	  return "http://comments-api.teemboom.com";
+	  return "https://comments-api.teemboom.com";
 	}
 	const TEEMBOOM_API_BASE_URL = getDefaultApiUrl();
 	const USER_ID_STORAGE_KEY = "teemboom_user_id";
@@ -518,7 +518,6 @@ var clear_land = (function (exports) {
 	  constructor() {
 	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
 	    this.apiUrl = (options.apiUrl || TEEMBOOM_API_BASE_URL).replace(/\/$/, "");
-	    console.log("Using Comment API URL:", this.apiUrl);
 	  }
 
 	  /**
@@ -823,7 +822,7 @@ var clear_land = (function (exports) {
 	    //   return "ws://socket.teemboom.com";
 	    // }
 
-	    return "ws://socket.teemboom.com";
+	    return "wss://socket.teemboom.com";
 	  }
 
 	  /**
