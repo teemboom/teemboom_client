@@ -488,6 +488,26 @@ var clear_land = (function (exports) {
 	var clientExports = requireClient();
 
 	/**
+	 * Central URL configuration for the Teemboom comment frontend.
+	 * All default service URLs are defined here for easy maintenance.
+	 */
+
+
+	/** Default base URL for the Comments REST API */
+	const DEFAULT_API_URL = "http://localhost:5003" ;
+
+	/** Default WebSocket URL for the live socket server */
+	const DEFAULT_WS_URL = "ws://localhost:5900" ;
+
+	/**
+	 * Resolve a caller-supplied URL override, falling back to the provided default.
+	 * Strips a trailing slash for consistency.
+	 */
+	function resolveUrl(override, defaultUrl) {
+	  return (override || defaultUrl).replace(/\/$/, "");
+	}
+
+	/**
 	 * API utilities for communicating with the Teemboom Comments API
 	 */
 
@@ -501,23 +521,12 @@ var clear_land = (function (exports) {
 	    return (c === "x" ? r : r & 0x3 | 0x8).toString(16);
 	  });
 	}
-	function getDefaultApiUrl() {
-	  // if (typeof window !== "undefined") {
-	  //   const host = window.location.host || "";
-	  //   if (host.startsWith("localhost") || host.startsWith("127.0.0.")) {
-	  //     return "http://localhost:5003";
-	  //   }
-	  // }
-
-	  return "https://comments-api.teemboom.com";
-	}
-	const TEEMBOOM_API_BASE_URL = getDefaultApiUrl();
 	const USER_ID_STORAGE_KEY = "teemboom_user_id";
 	const USERNAME_STORAGE_KEY = "teemboom_username";
 	class CommentAPI {
 	  constructor() {
 	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-	    this.apiUrl = (options.apiUrl || TEEMBOOM_API_BASE_URL).replace(/\/$/, "");
+	    this.apiUrl = resolveUrl(options.apiUrl, DEFAULT_API_URL);
 	  }
 
 	  /**
@@ -807,22 +816,7 @@ var clear_land = (function (exports) {
 	    };
 	  }
 	  getDefaultWsUrl() {
-	    // if (typeof window !== "undefined") {
-	    //   const host = window.location.host || "";
-	    //   const hostname = window.location.hostname || "";
-
-	    //   if (
-	    //     host.startsWith("localhost") ||
-	    //     host.startsWith("127.0.0.") ||
-	    //     hostname === "::1"
-	    //   ) {
-	    //     return "ws://localhost:5900";
-	    //   }
-
-	    //   return "ws://socket.teemboom.com";
-	    // }
-
-	    return "wss://socket.teemboom.com";
+	    return DEFAULT_WS_URL;
 	  }
 
 	  /**
@@ -866,7 +860,7 @@ var clear_land = (function (exports) {
 	          settleReject(timeoutError);
 	        }, this.connectionTimeout);
 	        this.ws.onopen = () => {
-	          console.log("WebSocket connected");
+	          // console.log("WebSocket connected");
 	          this.reconnectAttempts = 0;
 	          this.clearReconnectTimer();
 	          this.rejoinRooms();
@@ -883,7 +877,7 @@ var clear_land = (function (exports) {
 	          }
 	        };
 	        this.ws.onclose = () => {
-	          console.log("WebSocket disconnected");
+	          // console.log("WebSocket disconnected");
 	          if (!settled) {
 	            settleReject(new Error("WebSocket closed before connection established"));
 	          }
@@ -913,7 +907,9 @@ var clear_land = (function (exports) {
 	    }
 	    this.reconnectAttempts++;
 	    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), this.maxReconnectDelay);
-	    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+	    // console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
 	    this.reconnectTimer = setTimeout(() => {
 	      this.reconnectTimer = null;
 	      this.connect().catch(error => {
@@ -1138,9 +1134,7 @@ var clear_land = (function (exports) {
 	    }
 
 	    // Also log unknown types for debugging
-	    if (!this.messageHandlers[type]) {
-	      console.log(`Received message of type: ${type}`, data);
-	    }
+	    if (!this.messageHandlers[type]) ;
 	  }
 
 	  /**
@@ -4674,7 +4668,6 @@ var clear_land = (function (exports) {
 	  let {
 	    pageId = "unknown",
 	    apiUrl,
-	    authUrl,
 	    colorMode
 	  } = _ref7;
 	  const [commentsById, setCommentsById] = reactExports.useState({});
@@ -4732,31 +4725,7 @@ var clear_land = (function (exports) {
 	  }, [updateCommentsById]);
 	  const authenticationType = config?.authentication_type || config?.identification || "guest";
 	  const hasAuthenticatedIdentity = authenticationType === "guest" || Boolean(getUserIdentifier(user)) && getUsername(user) !== "Anonymous";
-	  const resolvedAuthUrl = reactExports.useMemo(() => {
-	    if (authUrl) {
-	      return authUrl.replace(/\/$/, "");
-	    }
-	    if (typeof window !== "undefined") {
-	      const host = window.location.host || "";
-	      if (host.startsWith("localhost") || host.startsWith("127.0.0.")) {
-	        return "http://localhost:5000";
-	      }
-	    }
-	    return "https://auth.teemboom.com";
-	  }, [authUrl]);
-	  const resolvedApiUrl = reactExports.useMemo(() => {
-	    if (apiUrl) {
-	      return apiUrl.replace(/\/$/, "");
-	    }
-	    if (typeof window !== "undefined") {
-	      const host = window.location.host || "";
-	      if (host.startsWith("localhost") || host.startsWith("127.0.0.")) {
-	        return "http://localhost:5003";
-	      }
-	    }
-	    console.log("Using default API URL:", "https://comments-api.teemboom.com");
-	    return "https://comments-api.teemboom.com";
-	  }, [apiUrl]);
+	  const resolvedApiUrl = reactExports.useMemo(() => resolveUrl(apiUrl, DEFAULT_API_URL), [apiUrl]);
 
 	  // Initialize API and fetch config
 	  reactExports.useEffect(() => {
@@ -4946,7 +4915,7 @@ var clear_land = (function (exports) {
 
 	    // Handler for comment edits (direct message type)
 	    const handleEditMessage = data => {
-	      console.log("Received comment edit via WebSocket:", data);
+	      // console.log("Received comment edit via WebSocket:", data);
 	      const commentId = data?._id || data?.comment_id;
 	      if (commentId) {
 	        patchComment(commentId, {
@@ -4957,7 +4926,7 @@ var clear_land = (function (exports) {
 
 	    // Handler for comment deletions (direct message type)
 	    const handleDeleteMessage = data => {
-	      console.log("Received comment deletion via WebSocket:", data);
+	      // console.log("Received comment deletion via WebSocket:", data);
 	      const commentId = data?._id || data?.comment_id;
 	      const parentId = data?.parent_id || null;
 	      if (!commentId) return;
@@ -5060,7 +5029,7 @@ var clear_land = (function (exports) {
 	    }
 	    setAuthIframeUrl(null);
 	    setUser(getDefaultUser("guest"));
-	  }, [authenticationType, resolvedApiUrl, resolvedAuthUrl]);
+	  }, [authenticationType, resolvedApiUrl]);
 
 	  // Get default user and load comments
 	  reactExports.useEffect(() => {
@@ -5603,7 +5572,6 @@ var clear_land = (function (exports) {
 	  root.render(/*#__PURE__*/React.createElement(Widget, {
 	    pageId: pageId,
 	    apiUrl: options.api_url,
-	    authUrl: options.auth_url,
 	    colorMode: options.color_mode // "light" | "dark" | undefined (default to light)
 	  }));
 	  widgetInstance = {
