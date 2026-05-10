@@ -494,10 +494,10 @@ var clear_land = (function (exports) {
 
 
 	/** Default base URL for the Comments REST API */
-	const DEFAULT_API_URL = "https://comments-api.teemboom.com";
+	const DEFAULT_API_URL = "http://localhost:5003" ;
 
 	/** Default WebSocket URL for the live socket server */
-	const DEFAULT_WS_URL = "wss://socket.teemboom.com";
+	const DEFAULT_WS_URL = "ws://localhost:5900" ;
 
 	/**
 	 * Resolve a caller-supplied URL override, falling back to the provided default.
@@ -702,6 +702,29 @@ var clear_land = (function (exports) {
 	      return data.status;
 	    } catch (error) {
 	      console.error("Error reporting comment:", error);
+	      return false;
+	    }
+	  }
+
+	  /**
+	   * Delete a comment
+	   */
+	  async deleteComment(commentId, userId) {
+	    try {
+	      const response = await fetch(`${this.apiUrl}/delete_comment`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          comment_id: commentId,
+	          user_id: userId
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status;
+	    } catch (error) {
+	      console.error("Error deleting comment:", error);
 	      return false;
 	    }
 	  }
@@ -4449,7 +4472,357 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function CommentItem(_ref6) {
+	function EditCommentPopup(_ref6) {
+	  let {
+	    comment,
+	    onSave,
+	    onClose
+	  } = _ref6;
+	  const [value, setValue] = reactExports.useState(comment?.content || "");
+	  const [saving, setSaving] = reactExports.useState(false);
+	  const [error, setError] = reactExports.useState("");
+	  const textareaRef = reactExports.useRef(null);
+	  reactExports.useEffect(() => {
+	    if (textareaRef.current) {
+	      textareaRef.current.focus();
+	      textareaRef.current.selectionStart = textareaRef.current.value.length;
+	    }
+	  }, []);
+	  const handleSave = async () => {
+	    const trimmed = value.trim();
+	    if (!trimmed) {
+	      setError("Comment cannot be empty.");
+	      return;
+	    }
+	    if (trimmed === (comment?.content || "").trim()) {
+	      onClose();
+	      return;
+	    }
+	    setSaving(true);
+	    setError("");
+	    const ok = await onSave(trimmed);
+	    setSaving(false);
+	    if (ok) {
+	      onClose();
+	    } else {
+	      setError("Failed to save. Please try again.");
+	    }
+	  };
+	  return /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	    className: "teemboomModalOverlay",
+	    onClick: onClose,
+	    children: /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	      className: "teemboomModal",
+	      onClick: e => e.stopPropagation(),
+	      children: [/*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	        className: "teemboomModalHeader",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("span", {
+	          children: "Edit comment"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalClose",
+	          onClick: onClose,
+	          children: "\u2715"
+	        })]
+	      }), /*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+	        ref: textareaRef,
+	        className: "teemboomModalTextarea",
+	        value: value,
+	        maxLength: 5000,
+	        onChange: e => setValue(e.target.value),
+	        onKeyDown: e => {
+	          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSave();
+	        },
+	        rows: 5
+	      }), error && /*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	        className: "teemboomModalError",
+	        children: error
+	      }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	        className: "teemboomModalActions",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalCancel",
+	          onClick: onClose,
+	          children: "Cancel"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalConfirm",
+	          onClick: handleSave,
+	          disabled: saving,
+	          children: saving ? "Saving…" : "Save changes"
+	        })]
+	      })]
+	    })
+	  });
+	}
+	function DeleteCommentPopup(_ref7) {
+	  let {
+	    onConfirm,
+	    onClose
+	  } = _ref7;
+	  const [deleting, setDeleting] = reactExports.useState(false);
+	  const [error, setError] = reactExports.useState("");
+	  const handleDelete = async () => {
+	    setDeleting(true);
+	    setError("");
+	    const ok = await onConfirm();
+	    setDeleting(false);
+	    if (ok) {
+	      onClose();
+	    } else {
+	      setError("Failed to delete. Please try again.");
+	    }
+	  };
+	  return /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	    className: "teemboomModalOverlay",
+	    onClick: onClose,
+	    children: /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	      className: "teemboomModal teemboomModalSm",
+	      onClick: e => e.stopPropagation(),
+	      children: [/*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	        className: "teemboomModalHeader",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("span", {
+	          children: "Delete comment"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalClose",
+	          onClick: onClose,
+	          children: "\u2715"
+	        })]
+	      }), /*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	        className: "teemboomModalBody",
+	        children: "Are you sure you want to delete this comment? This action cannot be undone."
+	      }), error && /*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	        className: "teemboomModalError",
+	        children: error
+	      }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	        className: "teemboomModalActions",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalCancel",
+	          onClick: onClose,
+	          children: "Cancel"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalDanger",
+	          onClick: handleDelete,
+	          disabled: deleting,
+	          children: deleting ? "Deleting…" : "Delete"
+	        })]
+	      })]
+	    })
+	  });
+	}
+	function ReportCommentPopup(_ref8) {
+	  let {
+	    onConfirm,
+	    onClose
+	  } = _ref8;
+	  const [reason, setReason] = reactExports.useState("");
+	  const [submitting, setSubmitting] = reactExports.useState(false);
+	  const [done, setDone] = reactExports.useState(false);
+	  const [error, setError] = reactExports.useState("");
+	  const handleSubmit = async () => {
+	    setSubmitting(true);
+	    setError("");
+	    const ok = await onConfirm(reason.trim() || null);
+	    setSubmitting(false);
+	    if (ok) {
+	      setDone(true);
+	    } else {
+	      setError("Failed to report. Please try again.");
+	    }
+	  };
+	  return /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	    className: "teemboomModalOverlay",
+	    onClick: onClose,
+	    children: /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	      className: "teemboomModal teemboomModalSm",
+	      onClick: e => e.stopPropagation(),
+	      children: [/*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	        className: "teemboomModalHeader",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("span", {
+	          children: "Report comment"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          className: "teemboomModalClose",
+	          onClick: onClose,
+	          children: "\u2715"
+	        })]
+	      }), done ? /*#__PURE__*/jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, {
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	          className: "teemboomModalBody",
+	          children: "Thanks for your report. We'll review this comment."
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	          className: "teemboomModalActions",
+	          children: /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	            type: "button",
+	            className: "teemboomModalConfirm",
+	            onClick: onClose,
+	            children: "Close"
+	          })
+	        })]
+	      }) : /*#__PURE__*/jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, {
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	          className: "teemboomModalBody",
+	          children: "Why are you reporting this comment? (optional)"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+	          className: "teemboomModalTextarea",
+	          value: reason,
+	          onChange: e => setReason(e.target.value),
+	          placeholder: "Spam, harassment, misinformation\u2026",
+	          rows: 3,
+	          maxLength: 500
+	        }), error && /*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	          className: "teemboomModalError",
+	          children: error
+	        }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	          className: "teemboomModalActions",
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	            type: "button",
+	            className: "teemboomModalCancel",
+	            onClick: onClose,
+	            children: "Cancel"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	            type: "button",
+	            className: "teemboomModalConfirm",
+	            onClick: handleSubmit,
+	            disabled: submitting,
+	            children: submitting ? "Submitting…" : "Submit report"
+	          })]
+	        })]
+	      })]
+	    })
+	  });
+	}
+	function CommentActionsMenu(_ref9) {
+	  let {
+	    comment,
+	    userId,
+	    onEdit,
+	    onDelete,
+	    onReport
+	  } = _ref9;
+	  const [open, setOpen] = reactExports.useState(false);
+	  const menuRef = reactExports.useRef(null);
+	  const isOwner = userId && comment?.user_id && userId === comment.user_id;
+	  reactExports.useEffect(() => {
+	    if (!open) return;
+	    const handleClickOutside = e => {
+	      const path = e.composedPath ? e.composedPath() : [];
+	      if (menuRef.current && !path.includes(menuRef.current)) {
+	        setOpen(false);
+	      }
+	    };
+	    document.addEventListener("click", handleClickOutside, true);
+	    return () => document.removeEventListener("click", handleClickOutside, true);
+	  }, [open]);
+	  return /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	    className: "teemboomCommentActions",
+	    ref: menuRef,
+	    children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	      type: "button",
+	      className: "teemboomCommentActionsBtn",
+	      onClick: e => {
+	        e.stopPropagation();
+	        setOpen(v => !v);
+	      },
+	      "aria-label": "Comment actions",
+	      title: "Actions",
+	      children: /*#__PURE__*/jsxRuntimeExports.jsx("svg", {
+	        width: "12",
+	        height: "12",
+	        viewBox: "0 0 24 24",
+	        fill: "none",
+	        stroke: "currentColor",
+	        strokeWidth: "2.5",
+	        strokeLinecap: "round",
+	        strokeLinejoin: "round",
+	        children: /*#__PURE__*/jsxRuntimeExports.jsx("polyline", {
+	          points: "6 9 12 15 18 9"
+	        })
+	      })
+	    }), open && /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	      className: "teemboomCommentActionsDropdown",
+	      children: [isOwner && /*#__PURE__*/jsxRuntimeExports.jsxs("button", {
+	        type: "button",
+	        onClick: () => {
+	          onEdit(comment);
+	          setOpen(false);
+	        },
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsxs("svg", {
+	          width: "13",
+	          height: "13",
+	          viewBox: "0 0 24 24",
+	          fill: "none",
+	          stroke: "currentColor",
+	          strokeWidth: "2",
+	          strokeLinecap: "round",
+	          strokeLinejoin: "round",
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+	          })]
+	        }), "Edit"]
+	      }), isOwner && /*#__PURE__*/jsxRuntimeExports.jsxs("button", {
+	        type: "button",
+	        className: "teemboomActionsDelete",
+	        onClick: () => {
+	          onDelete(comment);
+	          setOpen(false);
+	        },
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsxs("svg", {
+	          width: "13",
+	          height: "13",
+	          viewBox: "0 0 24 24",
+	          fill: "none",
+	          stroke: "currentColor",
+	          strokeWidth: "2",
+	          strokeLinecap: "round",
+	          strokeLinejoin: "round",
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("polyline", {
+	            points: "3 6 5 6 21 6"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M10 11v6"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M14 11v6"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"
+	          })]
+	        }), "Delete"]
+	      }), /*#__PURE__*/jsxRuntimeExports.jsxs("button", {
+	        type: "button",
+	        className: "teemboomActionsReport",
+	        onClick: () => {
+	          onReport(comment);
+	          setOpen(false);
+	        },
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsxs("svg", {
+	          width: "13",
+	          height: "13",
+	          viewBox: "0 0 24 24",
+	          fill: "none",
+	          stroke: "currentColor",
+	          strokeWidth: "2",
+	          strokeLinecap: "round",
+	          strokeLinejoin: "round",
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx("line", {
+	            x1: "4",
+	            y1: "22",
+	            x2: "4",
+	            y2: "15"
+	          })]
+	        }), "Report"]
+	      })]
+	    })]
+	  });
+	}
+	function CommentItem(_ref0) {
 	  let {
 	    comment,
 	    replies,
@@ -4461,8 +4834,11 @@ var clear_land = (function (exports) {
 	    onReact,
 	    onReplySubmit,
 	    onLoadReplies,
-	    onLoadMoreReplies
-	  } = _ref6;
+	    onLoadMoreReplies,
+	    onReport,
+	    onEdit,
+	    onDelete
+	  } = _ref0;
 	  const [showReplies, setShowReplies] = reactExports.useState(false);
 	  const [loadingReplies, setLoadingReplies] = reactExports.useState(false);
 	  const [replyInput, setReplyInput] = reactExports.useState("");
@@ -4470,6 +4846,8 @@ var clear_land = (function (exports) {
 	  const [reactionCounts, setReactionCounts] = reactExports.useState(comment?.reactions || {});
 	  const [myReaction, setMyReaction] = reactExports.useState(comment?.my_reaction || null);
 	  const [isExpanded, setIsExpanded] = reactExports.useState(false);
+	  const [activePopup, setActivePopup] = reactExports.useState(null); // 'edit' | 'delete' | 'report'
+
 	  const commentContent = typeof comment?.content === "string" ? comment.content : "";
 	  const {
 	    previewText,
@@ -4544,6 +4922,107 @@ var clear_land = (function (exports) {
 	    setShowReplies(true);
 	  };
 	  const hasReactions = reactionCounts && Object.values(reactionCounts).some(v => Number(v) > 0);
+	  if (comment?.deleted) {
+	    return /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	      className: `teemboomComment deleted`,
+	      id: comment._id,
+	      children: /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	        className: "teemboomDeletedLayout",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	          className: "teemboomDeletedIcon",
+	          "aria-hidden": "true",
+	          children: /*#__PURE__*/jsxRuntimeExports.jsxs("svg", {
+	            width: "18",
+	            height: "18",
+	            viewBox: "0 0 24 24",
+	            fill: "none",
+	            children: [/*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	              d: "M21 12c0 4.9706-4.0294 9-9 9-1.6673 0-4.6686 0-6.6927-.0001-1.1038 0-1.6567 0-1.8836-.3673-.2268-.3672-.0247-.8719.3794-1.8813.4591-1.1467.9069-2.2651.6922-2.6971C3.5018 14.0555 3 13.0611 3 12c0-4.9706 4.0294-9 9-9s9 4.0294 9 9Z",
+	              stroke: "currentColor",
+	              strokeWidth: "1.8"
+	            }), /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	              d: "M7 7l10 10",
+	              stroke: "currentColor",
+	              strokeWidth: "1.8",
+	              strokeLinecap: "round"
+	            })]
+	          })
+	        }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	          className: "teemboomDeletedContent",
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	            className: "teemboomcommentText",
+	            children: "[comment deleted]"
+	          }), !comment.parent_id && config?.showReplies && /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	            className: "teemboomCommentEngage",
+	            children: /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	              className: "teemboomReplyButton",
+	              onClick: handleToggleReplies,
+	              children: [/*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	                children: "View replies"
+	              }), /*#__PURE__*/jsxRuntimeExports.jsx("span", {
+	                className: "teemboomReplyNumber",
+	                children: comment.replies || 0
+	              })]
+	            })
+	          }), !comment.parent_id && config?.showReplies && showReplies && /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	            className: "teemboomReplies",
+	            children: [/*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	              className: "teemboomRepliesInput",
+	              children: [/*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+	                className: "teemboomReplyInput",
+	                placeholder: "Leave a reply...",
+	                value: replyInput,
+	                onChange: event => setReplyInput(event.target.value),
+	                onInput: event => {
+	                  const el = event.target;
+	                  el.style.height = "auto";
+	                  const next = Math.min(el.scrollHeight, 100);
+	                  el.style.height = `${next}px`;
+	                  el.style.overflowY = el.scrollHeight > 100 ? "auto" : "hidden";
+	                },
+	                onKeyDown: event => {
+	                  if (event.key === "Enter" && !event.shiftKey) {
+	                    event.preventDefault();
+	                    handleReplySend();
+	                  }
+	                }
+	              }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	                className: "teemboomReplySend",
+	                onClick: handleReplySend,
+	                disabled: sendingReply,
+	                children: "Reply"
+	              })]
+	            }), loadingReplies ? /*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	              className: "teemboomLoading",
+	              children: "Loading replies..."
+	            }) : replies.length > 0 ? replies.map(reply => /*#__PURE__*/jsxRuntimeExports.jsx(CommentItem, {
+	              comment: reply,
+	              replies: [],
+	              repliesLoaded: false,
+	              config: config,
+	              userId: userId,
+	              onReact: onReact,
+	              onReplySubmit: onReplySubmit,
+	              onLoadReplies: onLoadReplies,
+	              onLoadMoreReplies: onLoadMoreReplies,
+	              onReport: onReport,
+	              onEdit: onEdit,
+	              onDelete: onDelete
+	            }, reply._id)) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
+	              className: "teemboomNoReplies",
+	              children: "No replies yet"
+	            }), hasMoreReplies && /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	              type: "button",
+	              className: "teemboomLoadMoreReplies",
+	              onClick: () => onLoadMoreReplies && onLoadMoreReplies(comment._id),
+	              disabled: loadingMoreReplies,
+	              children: loadingMoreReplies ? "Loading..." : "Load more replies"
+	            })]
+	          })]
+	        })]
+	      })
+	    });
+	  }
 	  return /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
 	    className: `teemboomComment${hasReactions ? " has-reactions" : ""}`,
 	    id: comment._id,
@@ -4573,6 +5052,12 @@ var clear_land = (function (exports) {
 	        myReaction: myReaction,
 	        onReact: handleReactionClick
 	      })]
+	    }), /*#__PURE__*/jsxRuntimeExports.jsx(CommentActionsMenu, {
+	      comment: comment,
+	      userId: userId,
+	      onEdit: () => setActivePopup("edit"),
+	      onDelete: () => setActivePopup("delete"),
+	      onReport: () => setActivePopup("report")
 	    }), /*#__PURE__*/jsxRuntimeExports.jsx("div", {
 	      className: `teemboomcommentText ${canExpand && !isCommentExpanded ? "collapsed" : ""}`.trim(),
 	      children: isCommentExpanded ? commentContent : previewText
@@ -4650,7 +5135,10 @@ var clear_land = (function (exports) {
 	        onReact: onReact,
 	        onReplySubmit: onReplySubmit,
 	        onLoadReplies: onLoadReplies,
-	        onLoadMoreReplies: onLoadMoreReplies
+	        onLoadMoreReplies: onLoadMoreReplies,
+	        onReport: onReport,
+	        onEdit: onEdit,
+	        onDelete: onDelete
 	      }, reply._id)) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	        className: "teemboomNoReplies",
 	        children: "No replies yet"
@@ -4661,15 +5149,25 @@ var clear_land = (function (exports) {
 	        disabled: loadingMoreReplies,
 	        children: loadingMoreReplies ? "Loading..." : "Load more replies"
 	      })]
+	    }), activePopup === "edit" && /*#__PURE__*/jsxRuntimeExports.jsx(EditCommentPopup, {
+	      comment: comment,
+	      onSave: newContent => onEdit(comment, newContent),
+	      onClose: () => setActivePopup(null)
+	    }), activePopup === "delete" && /*#__PURE__*/jsxRuntimeExports.jsx(DeleteCommentPopup, {
+	      onConfirm: () => onDelete(comment),
+	      onClose: () => setActivePopup(null)
+	    }), activePopup === "report" && /*#__PURE__*/jsxRuntimeExports.jsx(ReportCommentPopup, {
+	      onConfirm: reason => onReport(comment._id, reason),
+	      onClose: () => setActivePopup(null)
 	    })]
 	  });
 	}
-	function Widget(_ref7) {
+	function Widget(_ref1) {
 	  let {
 	    pageId = "unknown",
 	    apiUrl,
 	    colorMode
-	  } = _ref7;
+	  } = _ref1;
 	  const [commentsById, setCommentsById] = reactExports.useState({});
 	  const commentsByIdRef = reactExports.useRef({});
 	  const [topLevelIds, setTopLevelIds] = reactExports.useState([]);
@@ -5089,8 +5587,8 @@ var clear_land = (function (exports) {
 	    const allColors = config.colors || {};
 	    const palette = allColors[activeMode] || allColors["light"] || allColors;
 	    const font = config.font || {};
-	    Object.entries(palette).forEach(_ref8 => {
-	      let [key, value] = _ref8;
+	    Object.entries(palette).forEach(_ref10 => {
+	      let [key, value] = _ref10;
 	      root.style.setProperty(`--teemboom-${key}`, String(value));
 	    });
 
@@ -5414,6 +5912,56 @@ var clear_land = (function (exports) {
 	    }));
 	    return reply;
 	  };
+	  const handleReport = reactExports.useCallback(async (commentId, reason) => {
+	    if (!api || !ensureCanAct()) return false;
+	    const actingUser = resolveActingUser();
+	    const actingUserId = getUserIdentifier(actingUser);
+	    if (!actingUserId) return false;
+	    const content = reason ? {
+	      reason
+	    } : null;
+	    return api.reportComment(commentId, actingUserId, content);
+	  }, [api, user, config]);
+	  const handleEdit = reactExports.useCallback(async (comment, newContent) => {
+	    if (!api) return false;
+	    const actingUser = resolveActingUser();
+	    const actingUserId = getUserIdentifier(actingUser);
+	    if (!actingUserId) return false;
+	    const ok = await api.editComment(comment._id, actingUserId, newContent);
+	    if (ok) patchComment(comment._id, {
+	      content: newContent
+	    });
+	    return ok;
+	  }, [api, user, patchComment]);
+	  const handleDelete = reactExports.useCallback(async comment => {
+	    if (!api) return false;
+	    const actingUser = resolveActingUser();
+	    const actingUserId = getUserIdentifier(actingUser);
+	    if (!actingUserId) return false;
+	    const ok = await api.deleteComment(comment._id, actingUserId);
+	    if (!ok) return false;
+	    // Remove from flat map
+	    updateCommentsById(prev => {
+	      const next = {
+	        ...prev
+	      };
+	      delete next[comment._id];
+	      return next;
+	    });
+	    if (comment.parent_id) {
+	      setReplyIdsByParent(prev => ({
+	        ...prev,
+	        [comment.parent_id]: (prev[comment.parent_id] || []).filter(id => id !== comment._id)
+	      }));
+	      patchComment(comment.parent_id, c => ({
+	        ...c,
+	        replies: Math.max(0, Number(c.replies || 0) - 1)
+	      }));
+	    } else {
+	      setTopLevelIds(prev => prev.filter(id => id !== comment._id));
+	    }
+	    return true;
+	  }, [api, user, updateCommentsById, patchComment]);
 	  if (!config) {
 	    return /*#__PURE__*/jsxRuntimeExports.jsx("div", {
 	      className: "teemboom_container",
@@ -5481,7 +6029,10 @@ var clear_land = (function (exports) {
 	            onReact: handleReact,
 	            onReplySubmit: handleReplySubmit,
 	            onLoadReplies: handleRepliesLoad,
-	            onLoadMoreReplies: handleLoadMoreReplies
+	            onLoadMoreReplies: handleLoadMoreReplies,
+	            onReport: handleReport,
+	            onEdit: handleEdit,
+	            onDelete: handleDelete
 	          }, commentId);
 	        }) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	          className: "teemboomNoComments",
@@ -5507,7 +6058,7 @@ var clear_land = (function (exports) {
 	  });
 	}
 
-	var css_248z = ":host{all:initial}.teemboom_container{container-name:teemboom-widget;container-type:inline-size;display:block;width:100%}.teemboom_root,.teemboom_root *{box-sizing:border-box;font-family:var(--teemboom-font-family,\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif)}.teemboom_root{--tb-accent:var(--teemboom-primary,#4f46e5);--tb-accent-soft:color-mix(in srgb,var(--tb-accent) 14%,#fff);--tb-bg:var(--teemboom-main,#fff);--tb-surface:color-mix(in srgb,var(--tb-bg) 96%,#f6f8fb);--tb-surface-strong:color-mix(in srgb,var(--tb-bg) 90%,#eef2ff);--tb-border:color-mix(in srgb,var(--teemboom-border,#cbd5e1) 50%,transparent);--tb-border-strong:color-mix(in srgb,var(--teemboom-border,#94a3b8) 40%,transparent);--tb-text:var(--teemboom-text,#0f172a);--tb-text-muted:var(--teemboom-text_muted,#64748b);--tb-comment-bg:var(--teemboom-comment_bg,#fff);--tb-input-bg:var(--teemboom-input_bg,#fff);--tb-picker-bg:var(--teemboom-picker_bg,#fff);--tb-popup-bg:var(--teemboom-popup_bg,#fff);--tb-comment-text:var(--teemboom-comment_text,#1e293b);--tb-placeholder:var(--teemboom-placeholder,#6b7280);--tb-send-btn-bg:var(--teemboom-send_button_bg,#2563eb);--tb-send-btn-hover:var(--teemboom-send_button_hover_bg,#1d4ed8);--tb-send-btn-text:var(--teemboom-send_button_text,#fff);--tb-cancel-text:var(--teemboom-cancel_text,#374151);--tb-cancel-hover-bg:var(--teemboom-cancel_hover_bg,#f3f4f6);--tb-pinned-text:var(--teemboom-pinned_text,#b45309);--tb-pinned-bg:var(--teemboom-pinned_bg,#fffbeb);--tb-pinned-border:var(--teemboom-pinned_border,#fde68a);border-radius:16px;color:var(--tb-text);display:flex;flex-direction:column;font-size:var(--teemboom-pc-font-size,15px);line-height:1.45;position:relative;width:100%}#teemboomWriteComment,.teemboomWriteComment{align-items:center;background:var(--tb-input-bg);border-bottom:1px solid var(--tb-border);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;margin:14px 0;padding:10px 12px}.teemboomMainProfilePic{cursor:pointer;flex-shrink:0;transition:transform .2s ease}.teemboomMainProfilePic:hover{transform:translateY(-1px)}#teemboomCommentInput{align-self:center;background:transparent;border:none;border-radius:0;flex:1;font-family:inherit;line-height:1.35;margin:0;max-height:100px;min-height:28px;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}#teemboomCommentInput,.teemboomUsernameInput{color:var(--tb-text);font-size:.8em;outline:none}.teemboomUsernameInput{background:var(--tb-input-bg);border:1px solid var(--tb-border);border-radius:10px;min-width:0;padding:8px 10px;transition:border-color .15s ease,box-shadow .15s ease;width:140px}.teemboomUsernameInput:focus{border-color:color-mix(in srgb,var(--tb-accent) 45%,#cbd5e1);box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-accent) 12%,transparent)}.teemboomUsernameInput::placeholder{color:var(--tb-placeholder)}#teemboomCommentInput:focus{border:none;box-shadow:none}#teemboomCommentInput::placeholder,.teemboomReplyInput::placeholder{color:var(--tb-placeholder)}.teemboomWriteActions{align-items:center;display:flex;gap:6px;margin-left:auto}.teemboomWriteActionCancel,.teemboomWriteActionSubmit{background:transparent;border:0;border-radius:2px;cursor:pointer;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomWriteActionCancel{color:var(--tb-cancel-text)}.teemboomWriteActionCancel:hover{background:var(--tb-cancel-hover-bg)}.teemboomWriteActionSubmit{background:var(--tb-send-btn-bg);color:var(--tb-send-btn-text)}.teemboomWriteActionSubmit:hover{background:var(--tb-send-btn-hover)}#teemboomCommentsBox,.teemboomCommentsBox{background:transparent;flex:1;overflow-y:auto;padding:10px 0}.teemboomComment{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:14px;display:flex;flex-direction:column;gap:9px;margin:0 0 10px;padding:12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomComment:hover{box-shadow:0 6px 16px rgba(2,8,23,.05)}.teemboomComment:last-child{margin-bottom:12px}.teemboomPinned{background:var(--tb-pinned-bg);border:1px solid var(--tb-pinned-border);border-radius:999px;color:var(--tb-pinned-text);font-size:.8em;font-weight:600;margin-bottom:2px;padding:3px 10px;width:fit-content}.teemboomCommentMeta{align-items:flex-start;display:flex;gap:10px}.teemboomcommentProfilePic{flex-shrink:0}.teemboomCommentTitle{display:flex;flex:1;flex-direction:column;gap:3px}.teemboomCommentTitle p{color:var(--tb-text);font-size:.87em;font-weight:700;margin:0}.teemboomCommentTitle span{color:var(--tb-text-muted);font-size:.8em}.teemboomReactions{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto;position:relative}.teemboomReactionPickerButton,.teemboomReactionPickerItem,.teemboomReactionPill{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;cursor:pointer;transition:border-color .2s ease,background-color .2s ease,transform .12s ease}.teemboomReactionPill{align-items:center;display:inline-flex;gap:6px;min-height:30px;padding:4px 8px}.teemboomReactionPickerButton:hover,.teemboomReactionPickerItem:hover,.teemboomReactionPill:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 35%,#cbd5e1)}.teemboomReactionPickerItem.active,.teemboomReactionPill.active{background:color-mix(in srgb,var(--tb-accent) 15%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionEmoji{font-size:1em;line-height:1}.teemboomReactionCount{color:var(--tb-text-muted);font-size:.8em;font-weight:700;line-height:1}.teemboomReactionPill.active .teemboomReactionCount{color:color-mix(in srgb,var(--tb-accent) 75%,#0f172a)}.teemboomReactionPickerButton{align-items:center;display:inline-flex;font-size:.87em;gap:3px;justify-content:center;min-height:30px;min-width:36px;padding:4px 8px}.teemboomReactionPickerButton.open{background:color-mix(in srgb,var(--tb-accent) 10%,#fff);border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionPickerPlus{color:var(--tb-text-muted);font-size:.73em;font-weight:700}.teemboomReactionPicker{background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:12px;box-shadow:0 14px 34px rgba(2,8,23,.18);display:grid;gap:6px;grid-template-columns:repeat(5,minmax(0,1fr));min-width:220px;padding:8px;position:absolute;right:0;top:calc(100% + 8px);z-index:20}.teemboomReactionPickerItem{align-items:center;border-radius:10px;display:inline-flex;font-size:1.2em;height:32px;justify-content:center;width:36px}.teemboomReactionPickerMoreButton{color:var(--tb-text-muted);font-size:1.2em;font-weight:700}.teemboomReactionFullPicker{border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-width:min(90vw,360px);overflow:hidden;position:absolute;right:0;top:calc(100% + 8px);z-index:25}.teemboomReactionFullPicker em-emoji-picker{--border-radius:16px;--category-icon-size:18px;--font-family:inherit;--font-size:13px;--shadow:none;border:1px solid var(--tb-border);border-radius:16px;height:400px;max-width:min(90vw,360px);width:100%}.teemboomReactionPickerButton:disabled,.teemboomReactionPickerItem:disabled,.teemboomReactionPill:disabled{cursor:not-allowed;opacity:.5;transform:none}.teemboomReactionsPillsBar{display:none}.teemboomcommentText{color:var(--tb-comment-text);font-size:1em;line-height:1.6;overflow-wrap:anywhere;padding:0 0 0 50px;white-space:pre-wrap;word-break:break-word}.teemboomcommentText.collapsed{max-height:180px;overflow:hidden}.teemboomReadMoreToggle{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;margin-left:50px;padding:0}.teemboomReadMoreToggle:hover{text-decoration:underline}.teemboomCommentEngage{display:flex;gap:12px;margin-top:4px;padding:0 0 0 50px}.teemboomReplyButton{align-items:center;color:var(--tb-text-muted);cursor:pointer;display:flex;font-size:.8em;gap:5px;transition:color .2s ease}.teemboomReplyButton:hover{color:var(--tb-accent)}.teemboomReplyButton p{font-size:1em;font-weight:600;margin:0}.teemboomReplyButton svg{height:14px;width:14px}.teemboomReplyNumber{font-size:1em;font-weight:600;margin-left:2px}.teemboomReplies{border-top:1px dashed var(--tb-border);display:flex;flex-direction:column;gap:8px;margin-left:50px;margin-top:10px;padding:12px 0 0;position:relative}.teemboomRepliesInput{align-items:center;background:var(--tb-input-bg);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;padding:2px 12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomRepliesInput:focus-within{border-color:color-mix(in srgb,var(--tb-accent) 48%,#94a3b8)}.teemboomReplyInput{align-self:center;background:transparent;border:none;border-radius:0;color:var(--tb-text);flex:1;font-family:inherit;font-size:.8em;height:30px;line-height:1.35;margin:0;max-height:100px;min-height:15px;outline:none;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}.teemboomReplyInput:focus{border:none;box-shadow:none}.teemboomReplySend{align-self:center;background:var(--tb-send-btn-bg);border:0;border-radius:2px;color:var(--tb-send-btn-text);cursor:pointer;flex-shrink:0;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomReplySend:hover{background:var(--tb-send-btn-hover)}.teemboomReplySend:disabled{cursor:not-allowed;opacity:.5}.teemboomComment .teemboomComment{margin:8px 0 0}.teemboomLoadMoreReplies{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;padding:0}.teemboomLoading,.teemboomNoComments,.teemboomNoReplies{color:var(--tb-text-muted);font-size:.87em;margin:0;padding:20px;text-align:center}.teemboom_profile_avatar{align-items:center;border-radius:50%;box-shadow:inset 0 0 0 1px hsla(0,0%,100%,.2),0 4px 12px rgba(0,0,0,.18);color:#fff;display:inline-flex;font-weight:700;justify-content:center;user-select:none}.teemboom_popup_main{inset:0;position:absolute;z-index:200}.teemboom_popup_partition{background:transparent;inset:0;position:absolute}.teemboom_popup{background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 18px 40px rgba(2,8,23,.18);left:10px;padding:14px;position:absolute;top:64px;width:240px;z-index:210}.teemboom_popup_close{color:var(--tb-text-muted);cursor:pointer;font-size:1.07em;line-height:1;margin-bottom:8px;text-align:right}.teemboom_popup button{background:var(--tb-surface-strong);border:1px solid color-mix(in srgb,var(--tb-accent) 30%,#cbd5e1);border-radius:10px;color:#111827;cursor:pointer;font-weight:600;padding:8px 12px}.teemboom_iframe_cover{backdrop-filter:blur(2px);background:rgba(15,23,42,.22);inset:0;position:fixed;z-index:998}.teemboom_iframe{background:var(--tb-popup-bg);border:none;border-radius:14px;box-shadow:0 24px 60px rgba(2,8,23,.35);height:500px;left:50%;max-height:90vh;max-width:90vw;position:fixed;top:50%;transform:translate(-50%,-50%);width:400px;z-index:999}#teemboomCommentsBox::-webkit-scrollbar{width:8px}#teemboomCommentsBox::-webkit-scrollbar-track{background:transparent}#teemboomCommentsBox::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tb-accent) 28%,#cbd5e1);border-radius:999px}#teemboomCommentsBox::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--tb-accent) 40%,#94a3b8)}@container teemboom-widget (641px <= width <= 1024px){.teemboom_root{font-size:var(--teemboom-tablet-font-size,14px)}}@container teemboom-widget (width <= 600px){.teemboom_root{border-radius:12px;font-size:var(--teemboom-mobile-font-size,13px)}#teemboomWriteComment,.teemboomWriteComment{align-items:flex-start;flex-wrap:wrap;gap:5px;padding:12px 12px 5px}#teemboomCommentInput{border-bottom:1px solid var(--tb-border);flex:1 1 0;min-width:0}.teemboomWriteActions{display:flex;flex-basis:100%;justify-content:flex-end;padding-left:36px}.teemboomRepliesInput{align-items:flex-start;flex-wrap:wrap;gap:4px;padding-bottom:5px}.teemboomReplyInput{border-bottom:1px solid var(--tb-border);flex:1 1 100%;min-width:0}.teemboomReplySend{margin-left:auto}.teemboomComment{margin:0 0 10px;overflow:visible;padding:10px;position:relative}.teemboomComment.has-reactions{margin-bottom:32px}.teemboomComment.has-reactions:last-child{margin-bottom:52px}.teemboomComment .teemboomComment{margin:8px 0 0;overflow:visible}.teemboomComment .teemboomComment.has-reactions,.teemboomReplies{margin-bottom:15px}.teemboomReplies{margin-left:0;padding-left:0}.teemboomReplies:before{display:none}.teemboomRepliesInput{border-radius:3px}.teemboom_iframe{height:min(85vh,560px);width:calc(100vw - 20px)}.teemboomCommentMeta .teemboomReactions .teemboomReactionPill{display:none}.teemboomReactionsPillsBar{display:flex}.teemboomCommentMeta .teemboomReactions{background:transparent;border:none;border-radius:0;box-shadow:none;flex-wrap:nowrap;margin-left:auto;overflow-x:visible;padding:0}.teemboomReactionsPillsBar{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;box-shadow:0 2px 10px rgba(2,8,23,.12);flex-wrap:nowrap;justify-content:flex-start;margin-left:0;max-width:calc(100% - 20px);overflow-x:auto;padding:2px 4px;position:absolute;right:0;scrollbar-width:none;top:calc(100% - 13px);z-index:5}.teemboomReactionsPillsBar::-webkit-scrollbar{display:none}.teemboomReactionFullPicker,.teemboomReactionPicker{bottom:auto;left:auto;right:0;top:calc(100% + 8px)}.teemboomReactionFullPicker{max-width:min(90vw,320px)}}@media (prefers-reduced-motion:reduce){.teemboom_root,.teemboom_root *{animation:none!important;transition:none!important}}";
+	var css_248z = ":host{all:initial}.teemboom_container{container-name:teemboom-widget;container-type:inline-size;display:block;width:100%}.teemboom_root,.teemboom_root *{box-sizing:border-box;font-family:var(--teemboom-font-family,\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif)}.teemboom_root{--tb-accent:var(--teemboom-primary,#4f46e5);--tb-accent-soft:color-mix(in srgb,var(--tb-accent) 14%,#fff);--tb-bg:var(--teemboom-main,#fff);--tb-surface:color-mix(in srgb,var(--tb-bg) 96%,#f6f8fb);--tb-surface-strong:color-mix(in srgb,var(--tb-bg) 90%,#eef2ff);--tb-border:color-mix(in srgb,var(--teemboom-border,#cbd5e1) 50%,transparent);--tb-border-strong:color-mix(in srgb,var(--teemboom-border,#94a3b8) 40%,transparent);--tb-text:var(--teemboom-text,#0f172a);--tb-text-muted:var(--teemboom-text_muted,#64748b);--tb-comment-bg:var(--teemboom-comment_bg,#fff);--tb-input-bg:var(--teemboom-input_bg,#fff);--tb-picker-bg:var(--teemboom-picker_bg,#fff);--tb-popup-bg:var(--teemboom-popup_bg,#fff);--tb-comment-text:var(--teemboom-comment_text,#1e293b);--tb-placeholder:var(--teemboom-placeholder,#6b7280);--tb-send-btn-bg:var(--teemboom-send_button_bg,#2563eb);--tb-send-btn-hover:var(--teemboom-send_button_hover_bg,#1d4ed8);--tb-send-btn-text:var(--teemboom-send_button_text,#fff);--tb-cancel-text:var(--teemboom-cancel_text,#374151);--tb-cancel-hover-bg:var(--teemboom-cancel_hover_bg,#f3f4f6);--tb-pinned-text:var(--teemboom-pinned_text,#b45309);--tb-pinned-bg:var(--teemboom-pinned_bg,#fffbeb);--tb-pinned-border:var(--teemboom-pinned_border,#fde68a);border-radius:16px;color:var(--tb-text);display:flex;flex-direction:column;font-size:var(--teemboom-pc-font-size,15px);line-height:1.45;position:relative;width:100%}#teemboomWriteComment,.teemboomWriteComment{align-items:center;background:var(--tb-input-bg);border-bottom:1px solid var(--tb-border);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;margin:14px 0;padding:10px 12px}.teemboomMainProfilePic{cursor:pointer;flex-shrink:0;transition:transform .2s ease}.teemboomMainProfilePic:hover{transform:translateY(-1px)}#teemboomCommentInput{align-self:center;background:transparent;border:none;border-radius:0;flex:1;font-family:inherit;line-height:1.35;margin:0;max-height:100px;min-height:28px;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}#teemboomCommentInput,.teemboomUsernameInput{color:var(--tb-text);font-size:.8em;outline:none}.teemboomUsernameInput{background:var(--tb-input-bg);border:1px solid var(--tb-border);border-radius:10px;min-width:0;padding:8px 10px;transition:border-color .15s ease,box-shadow .15s ease;width:140px}.teemboomUsernameInput:focus{border-color:color-mix(in srgb,var(--tb-accent) 45%,#cbd5e1);box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-accent) 12%,transparent)}.teemboomUsernameInput::placeholder{color:var(--tb-placeholder)}#teemboomCommentInput:focus{border:none;box-shadow:none}#teemboomCommentInput::placeholder,.teemboomReplyInput::placeholder{color:var(--tb-placeholder)}.teemboomWriteActions{align-items:center;display:flex;gap:6px;margin-left:auto}.teemboomWriteActionCancel,.teemboomWriteActionSubmit{background:transparent;border:0;border-radius:2px;cursor:pointer;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomWriteActionCancel{color:var(--tb-cancel-text)}.teemboomWriteActionCancel:hover{background:var(--tb-cancel-hover-bg)}.teemboomWriteActionSubmit{background:var(--tb-send-btn-bg);color:var(--tb-send-btn-text)}.teemboomWriteActionSubmit:hover{background:var(--tb-send-btn-hover)}#teemboomCommentsBox,.teemboomCommentsBox{background:transparent;flex:1;overflow-y:auto;padding:10px 0}.teemboomComment{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:14px;display:flex;flex-direction:column;gap:9px;margin:0 0 10px;padding:12px;position:relative;transition:border-color .2s ease,box-shadow .2s ease}.teemboomComment:hover{box-shadow:0 6px 16px rgba(2,8,23,.05)}.teemboomComment:hover .teemboomCommentActionsBtn{display:flex}.teemboomComment:last-child{margin-bottom:12px}.teemboomComment.deleted{background-color:#fafafa;color:#6b6b6b;opacity:.88}.teemboomDeletedLayout{align-items:flex-start;display:flex;gap:10px}.teemboomDeletedIcon{align-items:center;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:50%;color:#7c7c84;display:flex;flex-shrink:0;height:40px;justify-content:center;width:40px}.teemboomDeletedContent{display:flex;flex:1;flex-direction:column;gap:8px;min-width:0}.teemboomComment.deleted .teemboomCommentEngage,.teemboomComment.deleted .teemboomcommentText{padding-left:0}.teemboomComment.deleted .teemboomReplies{margin-left:0}.teemboomCommentActions{position:absolute;right:0;top:-9px;z-index:10}.teemboomCommentActionsBtn{align-items:center;background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:6px;box-shadow:0 1px 4px rgba(2,8,23,.08);color:var(--tb-text-muted);cursor:pointer;display:flex;display:none;height:20px;justify-content:center;padding:0;transition:background .15s,color .15s;width:24px}.teemboomCommentActionsBtn:hover{background:var(--tb-border);color:var(--tb-text)}.teemboomCommentActionsDropdown{background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:10px;box-shadow:0 8px 24px rgba(2,8,23,.1);display:flex;flex-direction:column;min-width:148px;overflow:hidden;position:absolute;right:0;top:calc(100% + 4px);z-index:100}.teemboomCommentActionsDropdown button{align-items:center;background:none;border:none;color:var(--tb-text);cursor:pointer;display:flex;font-size:.85em;gap:8px;padding:9px 14px;text-align:left;transition:background .12s}.teemboomCommentActionsDropdown button:hover{background:var(--tb-border)}.teemboomCommentActionsDropdown button.teemboomActionsReport{color:#e53e3e}.teemboomPinned{background:var(--tb-pinned-bg);border:1px solid var(--tb-pinned-border);border-radius:999px;color:var(--tb-pinned-text);font-size:.8em;font-weight:600;margin-bottom:2px;padding:3px 10px;width:fit-content}.teemboomCommentMeta{align-items:flex-start;display:flex;gap:10px}.teemboomcommentProfilePic{flex-shrink:0}.teemboomCommentTitle{display:flex;flex:1;flex-direction:column;gap:3px}.teemboomCommentTitle p{color:var(--tb-text);font-size:.87em;font-weight:700;margin:0}.teemboomCommentTitle span{color:var(--tb-text-muted);font-size:.8em}.teemboomReactions{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto;position:relative}.teemboomReactionPickerButton,.teemboomReactionPickerItem,.teemboomReactionPill{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;cursor:pointer;transition:border-color .2s ease,background-color .2s ease,transform .12s ease}.teemboomReactionPill{align-items:center;display:inline-flex;gap:6px;min-height:30px;padding:4px 8px}.teemboomReactionPickerButton:hover,.teemboomReactionPickerItem:hover,.teemboomReactionPill:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 35%,#cbd5e1)}.teemboomReactionPickerItem.active,.teemboomReactionPill.active{background:color-mix(in srgb,var(--tb-accent) 15%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionEmoji{font-size:1em;line-height:1}.teemboomReactionCount{color:var(--tb-text-muted);font-size:.8em;font-weight:700;line-height:1}.teemboomReactionPill.active .teemboomReactionCount{color:color-mix(in srgb,var(--tb-accent) 75%,#0f172a)}.teemboomReactionPickerButton{align-items:center;display:inline-flex;font-size:.87em;gap:3px;justify-content:center;min-height:30px;min-width:36px;padding:4px 8px}.teemboomReactionPickerButton.open{background:color-mix(in srgb,var(--tb-accent) 10%,#fff);border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionPickerPlus{color:var(--tb-text-muted);font-size:.73em;font-weight:700}.teemboomReactionPicker{background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:12px;box-shadow:0 14px 34px rgba(2,8,23,.18);display:grid;gap:6px;grid-template-columns:repeat(5,minmax(0,1fr));min-width:220px;padding:8px;position:absolute;right:0;top:calc(100% + 8px);z-index:20}.teemboomReactionPickerItem{align-items:center;border-radius:10px;display:inline-flex;font-size:1.2em;height:32px;justify-content:center;width:36px}.teemboomReactionPickerMoreButton{color:var(--tb-text-muted);font-size:1.2em;font-weight:700}.teemboomReactionFullPicker{border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-width:min(90vw,360px);overflow:hidden;position:absolute;right:0;top:calc(100% + 8px);z-index:25}.teemboomReactionFullPicker em-emoji-picker{--border-radius:16px;--category-icon-size:18px;--font-family:inherit;--font-size:13px;--shadow:none;border:1px solid var(--tb-border);border-radius:16px;height:400px;max-width:min(90vw,360px);width:100%}.teemboomReactionPickerButton:disabled,.teemboomReactionPickerItem:disabled,.teemboomReactionPill:disabled{cursor:not-allowed;opacity:.5;transform:none}.teemboomReactionsPillsBar{display:none}.teemboomcommentText{color:var(--tb-comment-text);font-size:1em;line-height:1.6;overflow-wrap:anywhere;padding:0 0 0 50px;white-space:pre-wrap;word-break:break-word}.teemboomcommentText.collapsed{max-height:180px;overflow:hidden}.teemboomReadMoreToggle{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;margin-left:50px;padding:0}.teemboomReadMoreToggle:hover{text-decoration:underline}.teemboomCommentEngage{display:flex;gap:12px;margin-top:4px;padding:0 0 0 50px}.teemboomReplyButton{align-items:center;color:var(--tb-text-muted);cursor:pointer;display:flex;font-size:.8em;gap:5px;transition:color .2s ease}.teemboomReplyButton:hover{color:var(--tb-accent)}.teemboomReplyButton p{font-size:1em;font-weight:600;margin:0}.teemboomReplyButton svg{height:14px;width:14px}.teemboomReplyNumber{font-size:1em;font-weight:600;margin-left:2px}.teemboomReplies{border-top:1px dashed var(--tb-border);display:flex;flex-direction:column;gap:8px;margin-left:50px;margin-top:10px;padding:12px 0 0;position:relative}.teemboomRepliesInput{align-items:center;background:var(--tb-input-bg);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;padding:2px 12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomRepliesInput:focus-within{border-color:color-mix(in srgb,var(--tb-accent) 48%,#94a3b8)}.teemboomReplyInput{align-self:center;background:transparent;border:none;border-radius:0;color:var(--tb-text);flex:1;font-family:inherit;font-size:.8em;height:30px;line-height:1.35;margin:0;max-height:100px;min-height:15px;outline:none;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}.teemboomReplyInput:focus{border:none;box-shadow:none}.teemboomReplySend{align-self:center;background:var(--tb-send-btn-bg);border:0;border-radius:2px;color:var(--tb-send-btn-text);cursor:pointer;flex-shrink:0;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomReplySend:hover{background:var(--tb-send-btn-hover)}.teemboomReplySend:disabled{cursor:not-allowed;opacity:.5}.teemboomComment .teemboomComment{margin:8px 0 0}.teemboomLoadMoreReplies{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;padding:0}.teemboomLoading,.teemboomNoComments,.teemboomNoReplies{color:var(--tb-text-muted);font-size:.87em;margin:0;padding:20px;text-align:center}.teemboom_profile_avatar{align-items:center;border-radius:50%;box-shadow:inset 0 0 0 1px hsla(0,0%,100%,.2),0 4px 12px rgba(0,0,0,.18);color:#fff;display:inline-flex;font-weight:700;justify-content:center;user-select:none}.teemboom_popup_main{inset:0;position:absolute;z-index:200}.teemboom_popup_partition{background:transparent;inset:0;position:absolute}.teemboom_popup{background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 18px 40px rgba(2,8,23,.18);left:10px;padding:14px;position:absolute;top:64px;width:240px;z-index:210}.teemboom_popup_close{color:var(--tb-text-muted);cursor:pointer;font-size:1.07em;line-height:1;margin-bottom:8px;text-align:right}.teemboom_popup button{background:var(--tb-surface-strong);border:1px solid color-mix(in srgb,var(--tb-accent) 30%,#cbd5e1);border-radius:10px;color:#111827;cursor:pointer;font-weight:600;padding:8px 12px}.teemboom_iframe_cover{backdrop-filter:blur(2px);background:rgba(15,23,42,.22);inset:0;position:fixed;z-index:998}.teemboom_iframe{background:var(--tb-popup-bg);border:none;border-radius:14px;box-shadow:0 24px 60px rgba(2,8,23,.35);height:500px;left:50%;max-height:90vh;max-width:90vw;position:fixed;top:50%;transform:translate(-50%,-50%);width:400px;z-index:999}.teemboomActionsDelete{color:#e53e3e}.teemboomModalOverlay{align-items:center;backdrop-filter:blur(2px);background:rgba(15,23,42,.35);display:flex;inset:0;justify-content:center;position:fixed;z-index:1000}.teemboomModal{background:var(--tb-popup-bg,#fff);border:1px solid var(--tb-border);border-radius:16px;box-shadow:0 24px 60px rgba(2,8,23,.22);display:flex;flex-direction:column;gap:14px;max-width:calc(100vw - 32px);padding:20px;width:440px}.teemboomModalSm{width:360px}.teemboomModalHeader{align-items:center;color:var(--tb-text);display:flex;font-size:.95em;font-weight:700;justify-content:space-between}.teemboomModalClose{background:none;border:none;border-radius:6px;color:var(--tb-text-muted);cursor:pointer;font-size:1em;line-height:1;padding:2px 6px;transition:background .12s}.teemboomModalClose:hover{background:var(--tb-border)}.teemboomModalBody{color:var(--tb-text-muted);font-size:.88em;line-height:1.5;margin:0}.teemboomModalTextarea{background:var(--tb-surface-strong,#f8fafc);border:1px solid var(--tb-border);border-radius:10px;box-sizing:border-box;color:var(--tb-text);font-family:inherit;font-size:.88em;line-height:1.5;outline:none;padding:10px 12px;resize:vertical;transition:border-color .15s;width:100%}.teemboomModalTextarea:focus{border-color:var(--tb-accent,#4285f4)}.teemboomModalError{color:#e53e3e;font-size:.82em;margin:0}.teemboomModalActions{display:flex;gap:8px;justify-content:flex-end}.teemboomModalCancel{background:none;border:1px solid var(--tb-border);border-radius:10px;color:var(--tb-text-muted);cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:background .12s}.teemboomModalCancel:hover{background:var(--tb-border)}.teemboomModalConfirm{background:var(--tb-accent,#4285f4);border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalConfirm:hover:not(:disabled){opacity:.88}.teemboomModalConfirm:disabled{cursor:not-allowed;opacity:.55}.teemboomModalDanger{background:#e53e3e;border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalDanger:hover:not(:disabled){opacity:.88}.teemboomModalDanger:disabled{cursor:not-allowed;opacity:.55}#teemboomCommentsBox::-webkit-scrollbar{width:8px}#teemboomCommentsBox::-webkit-scrollbar-track{background:transparent}#teemboomCommentsBox::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tb-accent) 28%,#cbd5e1);border-radius:999px}#teemboomCommentsBox::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--tb-accent) 40%,#94a3b8)}@container teemboom-widget (641px <= width <= 1024px){.teemboom_root{font-size:var(--teemboom-tablet-font-size,14px)}}@container teemboom-widget (width <= 600px){.teemboom_root{border-radius:12px;font-size:var(--teemboom-mobile-font-size,13px)}#teemboomWriteComment,.teemboomWriteComment{align-items:flex-start;flex-wrap:wrap;gap:5px;padding:12px 12px 5px}#teemboomCommentInput{border-bottom:1px solid var(--tb-border);flex:1 1 0;min-width:0}.teemboomWriteActions{display:flex;flex-basis:100%;justify-content:flex-end;padding-left:36px}.teemboomRepliesInput{align-items:flex-start;flex-wrap:wrap;gap:4px;padding-bottom:5px}.teemboomReplyInput{border-bottom:1px solid var(--tb-border);flex:1 1 100%;min-width:0}.teemboomReplySend{margin-left:auto}.teemboomComment{margin:0 0 10px;overflow:visible;padding:10px;position:relative}.teemboomComment.has-reactions{margin-bottom:32px}.teemboomComment.has-reactions:last-child{margin-bottom:52px}.teemboomComment .teemboomComment{margin:8px 0 0;overflow:visible}.teemboomComment .teemboomComment.has-reactions,.teemboomReplies{margin-bottom:15px}.teemboomReplies{margin-left:0;padding-left:0}.teemboomReplies:before{display:none}.teemboomRepliesInput{border-radius:3px}.teemboom_iframe{height:min(85vh,560px);width:calc(100vw - 20px)}.teemboomCommentMeta .teemboomReactions .teemboomReactionPill{display:none}.teemboomReactionsPillsBar{display:flex}.teemboomCommentMeta .teemboomReactions{background:transparent;border:none;border-radius:0;box-shadow:none;flex-wrap:nowrap;margin-left:auto;overflow-x:visible;padding:0}.teemboomReactionsPillsBar{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;box-shadow:0 2px 10px rgba(2,8,23,.12);flex-wrap:nowrap;justify-content:flex-start;margin-left:0;max-width:calc(100% - 20px);overflow-x:auto;padding:2px 4px;position:absolute;right:0;scrollbar-width:none;top:calc(100% - 13px);z-index:5}.teemboomReactionsPillsBar::-webkit-scrollbar{display:none}.teemboomReactionFullPicker,.teemboomReactionPicker{bottom:auto;left:auto;right:0;top:calc(100% + 8px)}.teemboomReactionFullPicker{max-width:min(90vw,320px)}}@media (prefers-reduced-motion:reduce){.teemboom_root,.teemboom_root *{animation:none!important;transition:none!important}}";
 
 	function generateUUID() {
 	  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
