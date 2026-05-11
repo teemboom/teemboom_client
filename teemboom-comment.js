@@ -487,725 +487,6 @@ var clear_land = (function (exports) {
 
 	var clientExports = requireClient();
 
-	/**
-	 * Central URL configuration for the Teemboom comment frontend.
-	 * All default service URLs are defined here for easy maintenance.
-	 */
-
-
-	/** Default base URL for the Comments REST API */
-	const DEFAULT_API_URL = "https://comments-api.teemboom.com";
-
-	/** Default WebSocket URL for the live socket server */
-	const DEFAULT_WS_URL = "wss://socket.teemboom.com";
-
-	/**
-	 * Resolve a caller-supplied URL override, falling back to the provided default.
-	 * Strips a trailing slash for consistency.
-	 */
-	function resolveUrl(override, defaultUrl) {
-	  return (override || defaultUrl).replace(/\/$/, "");
-	}
-
-	/**
-	 * API utilities for communicating with the Teemboom Comments API
-	 */
-
-	function generateUUID$1() {
-	  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-	    return crypto.randomUUID();
-	  }
-	  // Fallback for older browsers
-	  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
-	    const r = Math.random() * 16 | 0;
-	    return (c === "x" ? r : r & 0x3 | 0x8).toString(16);
-	  });
-	}
-	const USER_ID_STORAGE_KEY = "teemboom_user_id";
-	const USERNAME_STORAGE_KEY = "teemboom_username";
-	class CommentAPI {
-	  constructor() {
-	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-	    this.apiUrl = resolveUrl(options.apiUrl, DEFAULT_API_URL);
-	  }
-
-	  /**
-	   * Get site configuration for a page
-	   */
-	  async getConfig(pageId) {
-	    try {
-	      const response = await fetch(`${this.apiUrl}/teemboom_config`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          page_id: pageId
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status ? data.data : null;
-	    } catch (error) {
-	      console.error("Error fetching config:", error);
-	      return null;
-	    }
-	  }
-
-	  /**
-	   * Get comments for a page
-	   */
-	  async getComments(pageId) {
-	    let options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
-	    try {
-	      const response = await fetch(`${this.apiUrl}/get_comments`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          page_id: pageId,
-	          filter: options.filter || "oldest",
-	          page: options.page || 1,
-	          per_page: options.perPage || 50,
-	          user_id: options.userId || undefined
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status ? data.data : [];
-	    } catch (error) {
-	      console.error("Error fetching comments:", error);
-	      return [];
-	    }
-	  }
-
-	  /**
-	   * Get nested comments (replies to a comment)
-	   */
-	  async getNestedComments(parentId) {
-	    let userId = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : null;
-	    let page = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 1;
-	    let perPage = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : 10;
-	    try {
-	      const response = await fetch(`${this.apiUrl}/get_nested_comments`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          parent_id: parentId,
-	          user_id: userId || undefined,
-	          page,
-	          per_page: perPage
-	        })
-	      });
-	      const data = await response.json();
-	      if (!data.status) return {
-	        comments: [],
-	        has_more: false,
-	        page
-	      };
-	      // Support both paginated shape { comments, has_more } and legacy flat array
-	      if (Array.isArray(data.data)) return {
-	        comments: data.data,
-	        has_more: false,
-	        page
-	      };
-	      return data.data;
-	    } catch (error) {
-	      console.error("Error fetching nested comments:", error);
-	      return {
-	        comments: [],
-	        has_more: false,
-	        page
-	      };
-	    }
-	  }
-
-	  /**
-	   * Post a new comment
-	   */
-	  async postComment(pageId, content, user) {
-	    let parentId = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : null;
-	    try {
-	      const response = await fetch(`${this.apiUrl}/new_comment`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          page_id: pageId,
-	          content,
-	          user,
-	          parent_id: parentId
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status ? data.data : null;
-	    } catch (error) {
-	      console.error("Error posting comment:", error);
-	      return null;
-	    }
-	  }
-
-	  /**
-	   * Like a comment
-	   */
-	  async reactComment(userId, commentId, reaction) {
-	    try {
-	      const response = await fetch(`${this.apiUrl}/react_comment`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          user_id: userId,
-	          comment_id: commentId,
-	          reaction
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status ? data.data : null;
-	    } catch (error) {
-	      console.error("Error reacting to comment:", error);
-	      return null;
-	    }
-	  }
-	  async likeComment(userId, commentId) {
-	    return this.reactComment(userId, commentId, "like");
-	  }
-
-	  /**
-	   * Dislike a comment
-	   */
-	  async dislikeComment(userId, commentId) {
-	    return this.reactComment(userId, commentId, "dislike");
-	  }
-
-	  /**
-	   * Report a comment
-	   */
-	  async reportComment(commentId, userId) {
-	    let content = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
-	    try {
-	      const response = await fetch(`${this.apiUrl}/report_comment`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          comment_id: commentId,
-	          user_id: userId,
-	          content
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status;
-	    } catch (error) {
-	      console.error("Error reporting comment:", error);
-	      return false;
-	    }
-	  }
-
-	  /**
-	   * Delete a comment
-	   */
-	  async deleteComment(commentId, userId) {
-	    try {
-	      const response = await fetch(`${this.apiUrl}/delete_comment`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          comment_id: commentId,
-	          user_id: userId
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status;
-	    } catch (error) {
-	      console.error("Error deleting comment:", error);
-	      return false;
-	    }
-	  }
-
-	  /**
-	   * Edit a comment
-	   */
-	  async editComment(commentId, userId, content) {
-	    try {
-	      const response = await fetch(`${this.apiUrl}/edit_comment`, {
-	        method: "POST",
-	        headers: {
-	          "Content-Type": "application/json"
-	        },
-	        body: JSON.stringify({
-	          comment_id: commentId,
-	          user_id: userId,
-	          content
-	        })
-	      });
-	      const data = await response.json();
-	      return data.status;
-	    } catch (error) {
-	      console.error("Error editing comment:", error);
-	      return false;
-	    }
-	  }
-	}
-
-	/**
-	 * Get or create a user ID stored in localStorage
-	 */
-	function getUserId() {
-	  let userId = localStorage.getItem(USER_ID_STORAGE_KEY);
-	  if (!userId) {
-	    userId = generateUUID$1();
-	    localStorage.setItem(USER_ID_STORAGE_KEY, userId);
-	  }
-	  return userId;
-	}
-	function getStoredUsername() {
-	  const username = localStorage.getItem(USERNAME_STORAGE_KEY);
-	  return username ? username.trim() : "";
-	}
-	function setStoredUsername(username) {
-	  const normalizedUsername = typeof username === "string" ? username.trim() : "";
-	  if (!normalizedUsername) {
-	    localStorage.removeItem(USERNAME_STORAGE_KEY);
-	    return "";
-	  }
-	  localStorage.setItem(USERNAME_STORAGE_KEY, normalizedUsername);
-	  return normalizedUsername;
-	}
-	function clearStoredUsername() {
-	  localStorage.removeItem(USERNAME_STORAGE_KEY);
-	}
-
-	/**
-	 * Get default user object for comment posting
-	 */
-	function getDefaultUser() {
-	  let authenticationType = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "guest";
-	  const fallbackUsername = authenticationType === "username" ? getStoredUsername() || "Anonymous" : "Anonymous";
-	  return {
-	    _id: getUserId(),
-	    username: fallbackUsername,
-	    profile_pic: null
-	  };
-	}
-	function getUsernameUser() {
-	  const username = getStoredUsername();
-	  return {
-	    _id: getUserId(),
-	    username: username || "Anonymous",
-	    profile_pic: null
-	  };
-	}
-
-	/**
-	 * WebSocket client for live comment updates
-	 * Connects to the Go socket server and manages real-time events
-	 */
-
-	class CommentWebSocket {
-	  constructor() {
-	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-	    this.wsUrl = options.wsUrl || this.getDefaultWsUrl();
-	    this.clientId = options.clientId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
-	    this.ws = null;
-	    this.messageHandlers = {};
-	    this.reconnectAttempts = 0;
-	    this.maxReconnectAttempts = Number(options.maxReconnectAttempts ?? 10);
-	    this.reconnectDelay = Number(options.reconnectDelay ?? 1000); // ms
-	    this.maxReconnectDelay = Number(options.maxReconnectDelay ?? 30000); // ms
-	    this.connectionTimeout = Number(options.connectionTimeout ?? 10000); // ms
-	    this.maxQueueSize = Number(options.maxQueueSize ?? 1000);
-	    this.isIntentionallyClosed = false;
-	    this.joinedRooms = new Set();
-	    this.messageQueue = [];
-	    this.reconnectTimer = null;
-	    this.connectPromise = null;
-	    this.connectTimeoutTimer = null;
-	    this.eventDescriptions = {
-	      comment_created: "A new comment was created in this room",
-	      reply_created: "A new reply was added to a comment in this room",
-	      reaction_updated: "A reaction was added, removed, or changed",
-	      comment_edited: "A comment was edited",
-	      comment_deleted: "A comment was deleted",
-	      moderation_updated: "A moderation state changed for a comment",
-	      thread_updated: "The thread metadata changed",
-	      room_updated: "The room metadata changed"
-	    };
-	  }
-	  getDefaultWsUrl() {
-	    return DEFAULT_WS_URL;
-	  }
-
-	  /**
-	   * Connect to the WebSocket server
-	   */
-	  connect() {
-	    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-	      return Promise.resolve();
-	    }
-	    if (this.connectPromise) {
-	      return this.connectPromise;
-	    }
-	    this.isIntentionallyClosed = false;
-	    this.connectPromise = new Promise((resolve, reject) => {
-	      let settled = false;
-	      const settleResolve = () => {
-	        if (settled) {
-	          return;
-	        }
-	        settled = true;
-	        this.clearConnectTimeout();
-	        this.connectPromise = null;
-	        resolve();
-	      };
-	      const settleReject = error => {
-	        if (settled) {
-	          return;
-	        }
-	        settled = true;
-	        this.clearConnectTimeout();
-	        this.connectPromise = null;
-	        reject(error);
-	      };
-	      try {
-	        this.ws = new WebSocket(this.wsUrl);
-	        this.connectTimeoutTimer = setTimeout(() => {
-	          const timeoutError = new Error(`WebSocket connection timeout after ${this.connectionTimeout}ms`);
-	          if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
-	            this.ws.close();
-	          }
-	          settleReject(timeoutError);
-	        }, this.connectionTimeout);
-	        this.ws.onopen = () => {
-	          // console.log("WebSocket connected");
-	          this.reconnectAttempts = 0;
-	          this.clearReconnectTimer();
-	          this.rejoinRooms();
-	          this.processMessageQueue();
-	          settleResolve();
-	        };
-	        this.ws.onmessage = event => {
-	          this.handleRawMessage(event?.data);
-	        };
-	        this.ws.onerror = error => {
-	          console.error("WebSocket error:", error);
-	          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-	            settleReject(error);
-	          }
-	        };
-	        this.ws.onclose = () => {
-	          // console.log("WebSocket disconnected");
-	          if (!settled) {
-	            settleReject(new Error("WebSocket closed before connection established"));
-	          }
-	          this.attemptReconnect();
-	        };
-	      } catch (error) {
-	        console.error("Failed to create WebSocket:", error);
-	        settleReject(error);
-	      }
-	    });
-	    return this.connectPromise;
-	  }
-
-	  /**
-	   * Attempt to reconnect with exponential backoff
-	   */
-	  attemptReconnect() {
-	    if (this.isIntentionallyClosed) {
-	      return;
-	    }
-	    if (this.reconnectTimer) {
-	      return;
-	    }
-	    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-	      console.error("Max reconnection attempts reached");
-	      return;
-	    }
-	    this.reconnectAttempts++;
-	    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), this.maxReconnectDelay);
-
-	    // console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-
-	    this.reconnectTimer = setTimeout(() => {
-	      this.reconnectTimer = null;
-	      this.connect().catch(error => {
-	        console.error("Reconnection failed:", error);
-	        this.attemptReconnect();
-	      });
-	    }, delay);
-	  }
-
-	  /**
-	   * Send a message to the server
-	   */
-	  send(type, payload) {
-	    const message = {
-	      type,
-	      payload
-	    };
-	    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-	      this.ws.send(JSON.stringify(message));
-	      return true;
-	    } else {
-	      // Queue the message if not connected
-	      this.enqueueMessage(message);
-	      return false;
-	    }
-	  }
-	  enqueueMessage(message) {
-	    if (this.messageQueue.length >= this.maxQueueSize) {
-	      this.messageQueue.shift();
-	      console.warn("WebSocket queue full; dropping oldest queued message");
-	    }
-	    this.messageQueue.push(message);
-	  }
-
-	  /**
-	   * Process any queued messages once connected
-	   */
-	  processMessageQueue() {
-	    while (this.messageQueue.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
-	      const message = this.messageQueue.shift();
-	      this.ws.send(JSON.stringify(message));
-	    }
-	  }
-
-	  /**
-	   * Join a room to receive updates for that page/room
-	   */
-	  joinRoom(roomId) {
-	    const normalizedRoomId = String(roomId || "").trim();
-	    if (!normalizedRoomId) {
-	      return;
-	    }
-	    if (this.joinedRooms.has(normalizedRoomId)) {
-	      return; // Already joined
-	    }
-	    this.send("join_room", {
-	      room_id: normalizedRoomId
-	    });
-	    this.joinedRooms.add(normalizedRoomId);
-	  }
-	  broadcastComment(roomId, comment) {
-	    if (!roomId || !comment) {
-	      return;
-	    }
-	    const eventKey = comment.parent_id ? "reply_created" : "comment_created";
-	    this.broadcastEvent(roomId, "comment_created", {
-	      comment,
-	      parent_id: comment.parent_id || null,
-	      key: eventKey
-	    });
-	  }
-	  broadcastReaction(roomId, reactionData) {
-	    if (!roomId || !reactionData) {
-	      return;
-	    }
-	    this.broadcastEvent(roomId, "reaction_updated", {
-	      reaction: reactionData,
-	      comment_id: reactionData.comment_id || null
-	    });
-	  }
-	  broadcastReply(roomId, reply) {
-	    let parentCommentId = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
-	    if (!roomId || !reply) {
-	      return;
-	    }
-	    this.broadcastEvent(roomId, "comment_created", {
-	      comment: reply,
-	      parent_id: parentCommentId || reply.parent_id || null,
-	      key: "reply_created"
-	    });
-	  }
-	  broadcastCommentEdit(roomId, comment) {
-	    if (!roomId || !comment?._id) {
-	      return;
-	    }
-	    this.broadcastEvent(roomId, "comment_edited", {
-	      comment,
-	      comment_id: comment._id
-	    });
-	  }
-	  broadcastCommentDelete(roomId, commentId) {
-	    let parentId = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
-	    if (!roomId || !commentId) {
-	      return;
-	    }
-	    this.broadcastEvent(roomId, "comment_deleted", {
-	      comment_id: commentId,
-	      parent_id: parentId
-	    });
-	  }
-	  broadcastModerationUpdate(roomId, moderationData) {
-	    if (!roomId || !moderationData) {
-	      return;
-	    }
-	    this.broadcastEvent(roomId, "moderation_updated", {
-	      moderation: moderationData,
-	      comment_id: moderationData.comment_id || null
-	    });
-	  }
-	  broadcastEvent(roomId, eventKey) {
-	    let payload = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {};
-	    let options = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : {};
-	    const normalizedRoomId = String(roomId || "").trim();
-	    const normalizedKey = String(eventKey || "").trim();
-	    if (!normalizedRoomId || !normalizedKey) {
-	      return;
-	    }
-	    const normalizedPayload = payload && typeof payload === "object" ? payload : {
-	      value: payload
-	    };
-	    const payloadKey = typeof normalizedPayload.key === "string" && normalizedPayload.key.trim() ? normalizedPayload.key.trim() : normalizedKey;
-	    const description = options.description || this.eventDescriptions[payloadKey] || "Live room update";
-	    this.send("send_message", {
-	      room_id: normalizedRoomId,
-	      data: {
-	        ...normalizedPayload,
-	        payload: normalizedPayload,
-	        key: payloadKey,
-	        description,
-	        event: normalizedKey,
-	        origin_client_id: this.clientId,
-	        timestamp: Date.now()
-	      }
-	    });
-	  }
-
-	  /**
-	   * Leave a room
-	   */
-	  leaveRoom(roomId) {
-	    // Currently the Go server doesn't support leaving,
-	    // but we track it here for future implementation
-	    this.joinedRooms.delete(roomId);
-	  }
-
-	  /**
-	   * Register a handler for a specific message type
-	   */
-	  on(type, handler) {
-	    if (typeof handler !== "function") {
-	      return;
-	    }
-	    if (!this.messageHandlers[type]) {
-	      this.messageHandlers[type] = new Set();
-	    }
-	    this.messageHandlers[type].add(handler);
-	  }
-
-	  /**
-	   * Remove a handler for a specific message type
-	   */
-	  off(type, handler) {
-	    if (!this.messageHandlers[type]) {
-	      return;
-	    }
-	    if (typeof handler !== "function") {
-	      this.messageHandlers[type].clear();
-	      return;
-	    }
-	    this.messageHandlers[type].delete(handler);
-	    if (this.messageHandlers[type].size === 0) {
-	      delete this.messageHandlers[type];
-	    }
-	  }
-	  handleRawMessage(rawData) {
-	    if (typeof rawData !== "string") {
-	      return;
-	    }
-	    const chunks = rawData.split("\n").map(entry => entry.trim()).filter(Boolean);
-	    for (const chunk of chunks) {
-	      try {
-	        const message = JSON.parse(chunk);
-	        this.handleMessage(message);
-	      } catch (error) {
-	        console.error("Failed to parse WebSocket message chunk:", error, chunk);
-	      }
-	    }
-	  }
-
-	  /**
-	   * Handle incoming messages from the server
-	   */
-	  handleMessage(message) {
-	    const {
-	      type,
-	      data
-	    } = message;
-	    if (!type) {
-	      console.warn("Received message without type");
-	      return;
-	    }
-
-	    // Call registered handlers for this type
-	    if (this.messageHandlers[type]) {
-	      this.messageHandlers[type].forEach(handler => {
-	        try {
-	          handler(data);
-	        } catch (error) {
-	          console.error(`Error in ${type} handler:`, error);
-	        }
-	      });
-	    }
-
-	    // Also log unknown types for debugging
-	    if (!this.messageHandlers[type]) ;
-	  }
-
-	  /**
-	   * Disconnect from the server
-	   */
-	  disconnect() {
-	    this.isIntentionallyClosed = true;
-	    this.reconnectAttempts = 0;
-	    this.joinedRooms.clear();
-	    this.clearReconnectTimer();
-	    this.clearConnectTimeout();
-	    this.connectPromise = null;
-	    if (this.ws) {
-	      this.ws.close();
-	      this.ws = null;
-	    }
-	  }
-	  clearReconnectTimer() {
-	    if (this.reconnectTimer) {
-	      clearTimeout(this.reconnectTimer);
-	      this.reconnectTimer = null;
-	    }
-	  }
-	  clearConnectTimeout() {
-	    if (this.connectTimeoutTimer) {
-	      clearTimeout(this.connectTimeoutTimer);
-	      this.connectTimeoutTimer = null;
-	    }
-	  }
-	  rejoinRooms() {
-	    if (this.joinedRooms.size === 0) {
-	      return;
-	    }
-	    for (const roomId of this.joinedRooms) {
-	      this.send("join_room", {
-	        room_id: roomId
-	      });
-	    }
-	  }
-
-	  /**
-	   * Check if connected
-	   */
-	  isConnected() {
-	    return this.ws && this.ws.readyState === WebSocket.OPEN;
-	  }
-	}
-
 	function assertNonEmptyString (str) {
 	  if (typeof str !== 'string' || !str) {
 	    throw new Error('expected a non-empty string, got: ' + str)
@@ -4042,6 +3323,725 @@ var clear_land = (function (exports) {
 	  customElements.define('emoji-picker', PickerElement);
 	}
 
+	/**
+	 * Central URL configuration for the Teemboom comment frontend.
+	 * All default service URLs are defined here for easy maintenance.
+	 */
+
+
+	/** Default base URL for the Comments REST API */
+	const DEFAULT_API_URL = "https://comments-api.teemboom.com";
+
+	/** Default WebSocket URL for the live socket server */
+	const DEFAULT_WS_URL = "wss://socket.teemboom.com";
+
+	/**
+	 * Resolve a caller-supplied URL override, falling back to the provided default.
+	 * Strips a trailing slash for consistency.
+	 */
+	function resolveUrl(override, defaultUrl) {
+	  return (override || defaultUrl).replace(/\/$/, "");
+	}
+
+	/**
+	 * API utilities for communicating with the Teemboom Comments API
+	 */
+
+	function generateUUID$1() {
+	  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+	    return crypto.randomUUID();
+	  }
+	  // Fallback for older browsers
+	  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+	    const r = Math.random() * 16 | 0;
+	    return (c === "x" ? r : r & 0x3 | 0x8).toString(16);
+	  });
+	}
+	const USER_ID_STORAGE_KEY = "teemboom_user_id";
+	const USERNAME_STORAGE_KEY = "teemboom_username";
+	class CommentAPI {
+	  constructor() {
+	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+	    this.apiUrl = resolveUrl(options.apiUrl, DEFAULT_API_URL);
+	  }
+
+	  /**
+	   * Get site configuration for a page
+	   */
+	  async getConfig(pageId) {
+	    try {
+	      const response = await fetch(`${this.apiUrl}/teemboom_config`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          page_id: pageId
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status ? data.data : null;
+	    } catch (error) {
+	      console.error("Error fetching config:", error);
+	      return null;
+	    }
+	  }
+
+	  /**
+	   * Get comments for a page
+	   */
+	  async getComments(pageId) {
+	    let options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
+	    try {
+	      const response = await fetch(`${this.apiUrl}/get_comments`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          page_id: pageId,
+	          filter: options.filter || "oldest",
+	          page: options.page || 1,
+	          per_page: options.perPage || 50,
+	          user_id: options.userId || undefined
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status ? data.data : [];
+	    } catch (error) {
+	      console.error("Error fetching comments:", error);
+	      return [];
+	    }
+	  }
+
+	  /**
+	   * Get nested comments (replies to a comment)
+	   */
+	  async getNestedComments(parentId) {
+	    let userId = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : null;
+	    let page = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : 1;
+	    let perPage = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : 10;
+	    try {
+	      const response = await fetch(`${this.apiUrl}/get_nested_comments`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          parent_id: parentId,
+	          user_id: userId || undefined,
+	          page,
+	          per_page: perPage
+	        })
+	      });
+	      const data = await response.json();
+	      if (!data.status) return {
+	        comments: [],
+	        has_more: false,
+	        page
+	      };
+	      // Support both paginated shape { comments, has_more } and legacy flat array
+	      if (Array.isArray(data.data)) return {
+	        comments: data.data,
+	        has_more: false,
+	        page
+	      };
+	      return data.data;
+	    } catch (error) {
+	      console.error("Error fetching nested comments:", error);
+	      return {
+	        comments: [],
+	        has_more: false,
+	        page
+	      };
+	    }
+	  }
+
+	  /**
+	   * Post a new comment
+	   */
+	  async postComment(pageId, content, user) {
+	    let parentId = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : null;
+	    try {
+	      const response = await fetch(`${this.apiUrl}/new_comment`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          page_id: pageId,
+	          content,
+	          user,
+	          parent_id: parentId
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status ? data.data : null;
+	    } catch (error) {
+	      console.error("Error posting comment:", error);
+	      return null;
+	    }
+	  }
+
+	  /**
+	   * Like a comment
+	   */
+	  async reactComment(userId, commentId, reaction) {
+	    try {
+	      const response = await fetch(`${this.apiUrl}/react_comment`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          user_id: userId,
+	          comment_id: commentId,
+	          reaction
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status ? data.data : null;
+	    } catch (error) {
+	      console.error("Error reacting to comment:", error);
+	      return null;
+	    }
+	  }
+	  async likeComment(userId, commentId) {
+	    return this.reactComment(userId, commentId, "like");
+	  }
+
+	  /**
+	   * Dislike a comment
+	   */
+	  async dislikeComment(userId, commentId) {
+	    return this.reactComment(userId, commentId, "dislike");
+	  }
+
+	  /**
+	   * Report a comment
+	   */
+	  async reportComment(commentId, userId) {
+	    let content = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+	    try {
+	      const response = await fetch(`${this.apiUrl}/report_comment`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          comment_id: commentId,
+	          user_id: userId,
+	          content
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status;
+	    } catch (error) {
+	      console.error("Error reporting comment:", error);
+	      return false;
+	    }
+	  }
+
+	  /**
+	   * Delete a comment
+	   */
+	  async deleteComment(commentId, userId) {
+	    try {
+	      const response = await fetch(`${this.apiUrl}/delete_comment`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          comment_id: commentId,
+	          user_id: userId
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status;
+	    } catch (error) {
+	      console.error("Error deleting comment:", error);
+	      return false;
+	    }
+	  }
+
+	  /**
+	   * Edit a comment
+	   */
+	  async editComment(commentId, userId, content) {
+	    try {
+	      const response = await fetch(`${this.apiUrl}/edit_comment`, {
+	        method: "POST",
+	        headers: {
+	          "Content-Type": "application/json"
+	        },
+	        body: JSON.stringify({
+	          comment_id: commentId,
+	          user_id: userId,
+	          content
+	        })
+	      });
+	      const data = await response.json();
+	      return data.status;
+	    } catch (error) {
+	      console.error("Error editing comment:", error);
+	      return false;
+	    }
+	  }
+	}
+
+	/**
+	 * Get or create a user ID stored in localStorage
+	 */
+	function getUserId() {
+	  let userId = localStorage.getItem(USER_ID_STORAGE_KEY);
+	  if (!userId) {
+	    userId = generateUUID$1();
+	    localStorage.setItem(USER_ID_STORAGE_KEY, userId);
+	  }
+	  return userId;
+	}
+	function getStoredUsername() {
+	  const username = localStorage.getItem(USERNAME_STORAGE_KEY);
+	  return username ? username.trim() : "";
+	}
+	function setStoredUsername(username) {
+	  const normalizedUsername = typeof username === "string" ? username.trim() : "";
+	  if (!normalizedUsername) {
+	    localStorage.removeItem(USERNAME_STORAGE_KEY);
+	    return "";
+	  }
+	  localStorage.setItem(USERNAME_STORAGE_KEY, normalizedUsername);
+	  return normalizedUsername;
+	}
+	function clearStoredUsername() {
+	  localStorage.removeItem(USERNAME_STORAGE_KEY);
+	}
+
+	/**
+	 * Get default user object for comment posting
+	 */
+	function getDefaultUser() {
+	  let authenticationType = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "guest";
+	  const fallbackUsername = authenticationType === "username" ? getStoredUsername() || "Anonymous" : "Anonymous";
+	  return {
+	    _id: getUserId(),
+	    username: fallbackUsername,
+	    profile_pic: null
+	  };
+	}
+	function getUsernameUser() {
+	  const username = getStoredUsername();
+	  return {
+	    _id: getUserId(),
+	    username: username || "Anonymous",
+	    profile_pic: null
+	  };
+	}
+
+	/**
+	 * WebSocket client for live comment updates
+	 * Connects to the Go socket server and manages real-time events
+	 */
+
+	class CommentWebSocket {
+	  constructor() {
+	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+	    this.wsUrl = options.wsUrl || this.getDefaultWsUrl();
+	    this.clientId = options.clientId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+	    this.ws = null;
+	    this.messageHandlers = {};
+	    this.reconnectAttempts = 0;
+	    this.maxReconnectAttempts = Number(options.maxReconnectAttempts ?? 10);
+	    this.reconnectDelay = Number(options.reconnectDelay ?? 1000); // ms
+	    this.maxReconnectDelay = Number(options.maxReconnectDelay ?? 30000); // ms
+	    this.connectionTimeout = Number(options.connectionTimeout ?? 10000); // ms
+	    this.maxQueueSize = Number(options.maxQueueSize ?? 1000);
+	    this.isIntentionallyClosed = false;
+	    this.joinedRooms = new Set();
+	    this.messageQueue = [];
+	    this.reconnectTimer = null;
+	    this.connectPromise = null;
+	    this.connectTimeoutTimer = null;
+	    this.eventDescriptions = {
+	      comment_created: "A new comment was created in this room",
+	      reply_created: "A new reply was added to a comment in this room",
+	      reaction_updated: "A reaction was added, removed, or changed",
+	      comment_edited: "A comment was edited",
+	      comment_deleted: "A comment was deleted",
+	      moderation_updated: "A moderation state changed for a comment",
+	      thread_updated: "The thread metadata changed",
+	      room_updated: "The room metadata changed"
+	    };
+	  }
+	  getDefaultWsUrl() {
+	    return DEFAULT_WS_URL;
+	  }
+
+	  /**
+	   * Connect to the WebSocket server
+	   */
+	  connect() {
+	    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+	      return Promise.resolve();
+	    }
+	    if (this.connectPromise) {
+	      return this.connectPromise;
+	    }
+	    this.isIntentionallyClosed = false;
+	    this.connectPromise = new Promise((resolve, reject) => {
+	      let settled = false;
+	      const settleResolve = () => {
+	        if (settled) {
+	          return;
+	        }
+	        settled = true;
+	        this.clearConnectTimeout();
+	        this.connectPromise = null;
+	        resolve();
+	      };
+	      const settleReject = error => {
+	        if (settled) {
+	          return;
+	        }
+	        settled = true;
+	        this.clearConnectTimeout();
+	        this.connectPromise = null;
+	        reject(error);
+	      };
+	      try {
+	        this.ws = new WebSocket(this.wsUrl);
+	        this.connectTimeoutTimer = setTimeout(() => {
+	          const timeoutError = new Error(`WebSocket connection timeout after ${this.connectionTimeout}ms`);
+	          if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+	            this.ws.close();
+	          }
+	          settleReject(timeoutError);
+	        }, this.connectionTimeout);
+	        this.ws.onopen = () => {
+	          // console.log("WebSocket connected");
+	          this.reconnectAttempts = 0;
+	          this.clearReconnectTimer();
+	          this.rejoinRooms();
+	          this.processMessageQueue();
+	          settleResolve();
+	        };
+	        this.ws.onmessage = event => {
+	          this.handleRawMessage(event?.data);
+	        };
+	        this.ws.onerror = error => {
+	          console.error("WebSocket error:", error);
+	          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+	            settleReject(error);
+	          }
+	        };
+	        this.ws.onclose = () => {
+	          // console.log("WebSocket disconnected");
+	          if (!settled) {
+	            settleReject(new Error("WebSocket closed before connection established"));
+	          }
+	          this.attemptReconnect();
+	        };
+	      } catch (error) {
+	        console.error("Failed to create WebSocket:", error);
+	        settleReject(error);
+	      }
+	    });
+	    return this.connectPromise;
+	  }
+
+	  /**
+	   * Attempt to reconnect with exponential backoff
+	   */
+	  attemptReconnect() {
+	    if (this.isIntentionallyClosed) {
+	      return;
+	    }
+	    if (this.reconnectTimer) {
+	      return;
+	    }
+	    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+	      console.error("Max reconnection attempts reached");
+	      return;
+	    }
+	    this.reconnectAttempts++;
+	    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), this.maxReconnectDelay);
+
+	    // console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+	    this.reconnectTimer = setTimeout(() => {
+	      this.reconnectTimer = null;
+	      this.connect().catch(error => {
+	        console.error("Reconnection failed:", error);
+	        this.attemptReconnect();
+	      });
+	    }, delay);
+	  }
+
+	  /**
+	   * Send a message to the server
+	   */
+	  send(type, payload) {
+	    const message = {
+	      type,
+	      payload
+	    };
+	    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+	      this.ws.send(JSON.stringify(message));
+	      return true;
+	    } else {
+	      // Queue the message if not connected
+	      this.enqueueMessage(message);
+	      return false;
+	    }
+	  }
+	  enqueueMessage(message) {
+	    if (this.messageQueue.length >= this.maxQueueSize) {
+	      this.messageQueue.shift();
+	      console.warn("WebSocket queue full; dropping oldest queued message");
+	    }
+	    this.messageQueue.push(message);
+	  }
+
+	  /**
+	   * Process any queued messages once connected
+	   */
+	  processMessageQueue() {
+	    while (this.messageQueue.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
+	      const message = this.messageQueue.shift();
+	      this.ws.send(JSON.stringify(message));
+	    }
+	  }
+
+	  /**
+	   * Join a room to receive updates for that page/room
+	   */
+	  joinRoom(roomId) {
+	    const normalizedRoomId = String(roomId || "").trim();
+	    if (!normalizedRoomId) {
+	      return;
+	    }
+	    if (this.joinedRooms.has(normalizedRoomId)) {
+	      return; // Already joined
+	    }
+	    this.send("join_room", {
+	      room_id: normalizedRoomId
+	    });
+	    this.joinedRooms.add(normalizedRoomId);
+	  }
+	  broadcastComment(roomId, comment) {
+	    if (!roomId || !comment) {
+	      return;
+	    }
+	    const eventKey = comment.parent_id ? "reply_created" : "comment_created";
+	    this.broadcastEvent(roomId, "comment_created", {
+	      comment,
+	      parent_id: comment.parent_id || null,
+	      key: eventKey
+	    });
+	  }
+	  broadcastReaction(roomId, reactionData) {
+	    if (!roomId || !reactionData) {
+	      return;
+	    }
+	    this.broadcastEvent(roomId, "reaction_updated", {
+	      reaction: reactionData,
+	      comment_id: reactionData.comment_id || null
+	    });
+	  }
+	  broadcastReply(roomId, reply) {
+	    let parentCommentId = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+	    if (!roomId || !reply) {
+	      return;
+	    }
+	    this.broadcastEvent(roomId, "comment_created", {
+	      comment: reply,
+	      parent_id: parentCommentId || reply.parent_id || null,
+	      key: "reply_created"
+	    });
+	  }
+	  broadcastCommentEdit(roomId, comment) {
+	    if (!roomId || !comment?._id) {
+	      return;
+	    }
+	    this.broadcastEvent(roomId, "comment_edited", {
+	      comment,
+	      comment_id: comment._id
+	    });
+	  }
+	  broadcastCommentDelete(roomId, commentId) {
+	    let parentId = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+	    if (!roomId || !commentId) {
+	      return;
+	    }
+	    this.broadcastEvent(roomId, "comment_deleted", {
+	      comment_id: commentId,
+	      parent_id: parentId
+	    });
+	  }
+	  broadcastModerationUpdate(roomId, moderationData) {
+	    if (!roomId || !moderationData) {
+	      return;
+	    }
+	    this.broadcastEvent(roomId, "moderation_updated", {
+	      moderation: moderationData,
+	      comment_id: moderationData.comment_id || null
+	    });
+	  }
+	  broadcastEvent(roomId, eventKey) {
+	    let payload = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : {};
+	    let options = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : {};
+	    const normalizedRoomId = String(roomId || "").trim();
+	    const normalizedKey = String(eventKey || "").trim();
+	    if (!normalizedRoomId || !normalizedKey) {
+	      return;
+	    }
+	    const normalizedPayload = payload && typeof payload === "object" ? payload : {
+	      value: payload
+	    };
+	    const payloadKey = typeof normalizedPayload.key === "string" && normalizedPayload.key.trim() ? normalizedPayload.key.trim() : normalizedKey;
+	    const description = options.description || this.eventDescriptions[payloadKey] || "Live room update";
+	    this.send("send_message", {
+	      room_id: normalizedRoomId,
+	      data: {
+	        ...normalizedPayload,
+	        payload: normalizedPayload,
+	        key: payloadKey,
+	        description,
+	        event: normalizedKey,
+	        origin_client_id: this.clientId,
+	        timestamp: Date.now()
+	      }
+	    });
+	  }
+
+	  /**
+	   * Leave a room
+	   */
+	  leaveRoom(roomId) {
+	    // Currently the Go server doesn't support leaving,
+	    // but we track it here for future implementation
+	    this.joinedRooms.delete(roomId);
+	  }
+
+	  /**
+	   * Register a handler for a specific message type
+	   */
+	  on(type, handler) {
+	    if (typeof handler !== "function") {
+	      return;
+	    }
+	    if (!this.messageHandlers[type]) {
+	      this.messageHandlers[type] = new Set();
+	    }
+	    this.messageHandlers[type].add(handler);
+	  }
+
+	  /**
+	   * Remove a handler for a specific message type
+	   */
+	  off(type, handler) {
+	    if (!this.messageHandlers[type]) {
+	      return;
+	    }
+	    if (typeof handler !== "function") {
+	      this.messageHandlers[type].clear();
+	      return;
+	    }
+	    this.messageHandlers[type].delete(handler);
+	    if (this.messageHandlers[type].size === 0) {
+	      delete this.messageHandlers[type];
+	    }
+	  }
+	  handleRawMessage(rawData) {
+	    if (typeof rawData !== "string") {
+	      return;
+	    }
+	    const chunks = rawData.split("\n").map(entry => entry.trim()).filter(Boolean);
+	    for (const chunk of chunks) {
+	      try {
+	        const message = JSON.parse(chunk);
+	        this.handleMessage(message);
+	      } catch (error) {
+	        console.error("Failed to parse WebSocket message chunk:", error, chunk);
+	      }
+	    }
+	  }
+
+	  /**
+	   * Handle incoming messages from the server
+	   */
+	  handleMessage(message) {
+	    const {
+	      type,
+	      data
+	    } = message;
+	    if (!type) {
+	      console.warn("Received message without type");
+	      return;
+	    }
+
+	    // Call registered handlers for this type
+	    if (this.messageHandlers[type]) {
+	      this.messageHandlers[type].forEach(handler => {
+	        try {
+	          handler(data);
+	        } catch (error) {
+	          console.error(`Error in ${type} handler:`, error);
+	        }
+	      });
+	    }
+
+	    // Also log unknown types for debugging
+	    if (!this.messageHandlers[type]) ;
+	  }
+
+	  /**
+	   * Disconnect from the server
+	   */
+	  disconnect() {
+	    this.isIntentionallyClosed = true;
+	    this.reconnectAttempts = 0;
+	    this.joinedRooms.clear();
+	    this.clearReconnectTimer();
+	    this.clearConnectTimeout();
+	    this.connectPromise = null;
+	    if (this.ws) {
+	      this.ws.close();
+	      this.ws = null;
+	    }
+	  }
+	  clearReconnectTimer() {
+	    if (this.reconnectTimer) {
+	      clearTimeout(this.reconnectTimer);
+	      this.reconnectTimer = null;
+	    }
+	  }
+	  clearConnectTimeout() {
+	    if (this.connectTimeoutTimer) {
+	      clearTimeout(this.connectTimeoutTimer);
+	      this.connectTimeoutTimer = null;
+	    }
+	  }
+	  rejoinRooms() {
+	    if (this.joinedRooms.size === 0) {
+	      return;
+	    }
+	    for (const roomId of this.joinedRooms) {
+	      this.send("join_room", {
+	        room_id: roomId
+	      });
+	    }
+	  }
+
+	  /**
+	   * Check if connected
+	   */
+	  isConnected() {
+	    return this.ws && this.ws.readyState === WebSocket.OPEN;
+	  }
+	}
+
 	var jsxRuntime = {exports: {}};
 
 	var reactJsxRuntime_production_min = {};
@@ -4080,7 +4080,7 @@ var clear_land = (function (exports) {
 
 	var jsxRuntimeExports = requireJsxRuntime();
 
-	function EmojiPickerElement(_ref) {
+	function EmojiPickerElement$1(_ref) {
 	  let {
 	    onEmojiSelect
 	  } = _ref;
@@ -4262,7 +4262,10 @@ var clear_land = (function (exports) {
 	        type: "button",
 	        role: "menuitem",
 	        className: "teemboomReactionPickerItem teemboomReactionPickerMoreButton",
-	        onClick: () => setIsFullPickerOpen(true),
+	        onClick: () => {
+	          setIsPickerOpen(false);
+	          setIsFullPickerOpen(true);
+	        },
 	        title: "More emojis",
 	        "aria-label": "Open full emoji list",
 	        children: "\u22EF"
@@ -4270,7 +4273,7 @@ var clear_land = (function (exports) {
 	    }), showPicker && isFullPickerOpen && /*#__PURE__*/jsxRuntimeExports.jsx("div", {
 	      className: "teemboomReactionFullPicker",
 	      ref: fullPickerPopupRef,
-	      children: /*#__PURE__*/jsxRuntimeExports.jsx(EmojiPickerElement, {
+	      children: /*#__PURE__*/jsxRuntimeExports.jsx(EmojiPickerElement$1, {
 	        onEmojiSelect: async emojiObj => {
 	          await triggerReaction(emojiObj.native);
 	          setIsFullPickerOpen(false);
@@ -4332,6 +4335,12 @@ var clear_land = (function (exports) {
 	  });
 	}
 	const COMMENT_PREVIEW_WORD_LIMIT = 45;
+	const COMPOSER_MENU_ACTIONS = [{
+	  id: "emoji",
+	  label: "Emoji",
+	  kind: "picker"
+	}];
+	const REACTION_ICON_PATH = "M17.5,12 C20.5375661,12 23,14.4624339 23,17.5 C23,20.5375661 20.5375661,23 17.5,23 C14.4624339,23 12,20.5375661 12,17.5 C12,14.4624339 14.4624339,12 17.5,12 Z M12.0000002,1.99896738 C17.523704,1.99896738 22.0015507,6.47681407 22.0015507,12.0005179 C22.0015507,12.2637452 21.9913819,12.5245975 21.9714157,12.7827034 C21.5335438,12.3671164 21.0376367,12.012094 20.4972374,11.7307716 C20.3551544,7.16057357 16.6051843,3.49896738 12.0000002,3.49896738 C7.30472352,3.49896738 3.49844971,7.30524119 3.49844971,12.0005179 C3.49844971,16.6060394 7.16059249,20.3562216 11.7317296,20.4979161 C12.0124658,21.0381559 12.3673338,21.5337732 12.7825138,21.9716342 C12.5247521,21.9918733 12.2635668,22.0020684 12.0000002,22.0020684 C6.47629639,22.0020684 1.99844971,17.5242217 1.99844971,12.0005179 C1.99844971,6.47681407 6.47629639,1.99896738 12.0000002,1.99896738 Z M17.5,13.9992349 L17.4101244,14.0072906 C17.2060313,14.0443345 17.0450996,14.2052662 17.0080557,14.4093593 L17,14.4992349 L16.9996498,16.9992349 L14.4976498,17 L14.4077742,17.0080557 C14.2036811,17.0450996 14.0427494,17.2060313 14.0057055,17.4101244 L13.9976498,17.5 L14.0057055,17.5898756 C14.0427494,17.7939687 14.2036811,17.9549004 14.4077742,17.9919443 L14.4976498,18 L17.0006498,17.9992349 L17.0011076,20.5034847 L17.0091633,20.5933603 C17.0462073,20.7974534 17.207139,20.9583851 17.411232,20.995429 L17.5011076,21.0034847 L17.5909833,20.995429 C17.7950763,20.9583851 17.956008,20.7974534 17.993052,20.5933603 L18.0011076,20.5034847 L18.0006498,17.9992349 L20.5045655,18 L20.5944411,17.9919443 C20.7985342,17.9549004 20.9594659,17.7939687 20.9965098,17.5898756 L21.0045655,17.5 L20.9965098,17.4101244 C20.9594659,17.2060313 20.7985342,17.0450996 20.5944411,17.0080557 L20.5045655,17 L17.9996498,16.9992349 L18,14.4992349 L17.9919443,14.4093593 C17.9549004,14.2052662 17.7939687,14.0443345 17.5898756,14.0072906 L17.5,13.9992349 Z M8.46174078,14.7838355 C9.12309331,15.6232213 10.0524954,16.1974014 11.0917655,16.4103066 C11.0312056,16.7638158 11,17.1282637 11,17.5 C11,17.6408778 11.0044818,17.7807089 11.0133105,17.9193584 C9.53812034,17.6766509 8.21128537,16.8896809 7.28351576,15.7121597 C7.02716611,15.3868018 7.08310832,14.9152347 7.40846617,14.6588851 C7.73382403,14.4025354 8.20539113,14.4584777 8.46174078,14.7838355 Z M9.00044779,8.75115873 C9.69041108,8.75115873 10.2497368,9.3104845 10.2497368,10.0004478 C10.2497368,10.6904111 9.69041108,11.2497368 9.00044779,11.2497368 C8.3104845,11.2497368 7.75115873,10.6904111 7.75115873,10.0004478 C7.75115873,9.3104845 8.3104845,8.75115873 9.00044779,8.75115873 Z M15.0004478,8.75115873 C15.6904111,8.75115873 16.2497368,9.3104845 16.2497368,10.0004478 C16.2497368,10.6904111 15.6904111,11.2497368 15.0004478,11.2497368 C14.3104845,11.2497368 13.7511587,10.6904111 13.7511587,10.0004478 C13.7511587,9.3104845 14.3104845,8.75115873 15.0004478,8.75115873 Z";
 	function buildCommentPreview(content) {
 	  let wordLimit = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : COMMENT_PREVIEW_WORD_LIMIT;
 	  const text = typeof content === "string" ? content.trim() : "";
@@ -4353,14 +4362,216 @@ var clear_land = (function (exports) {
 	    hasHiddenText: true
 	  };
 	}
-	function ProfileMenu(_ref2) {
+	function EmojiPickerElement(_ref2) {
+	  let {
+	    onEmojiSelect
+	  } = _ref2;
+	  const ref = reactExports.useRef(null);
+	  reactExports.useEffect(() => {
+	    const element = ref.current;
+	    if (!element) {
+	      return undefined;
+	    }
+	    const handleEmojiClick = event => {
+	      const emoji = event?.detail?.unicode;
+	      if (emoji) {
+	        onEmojiSelect({
+	          native: emoji
+	        });
+	      }
+	    };
+	    element.addEventListener("emoji-click", handleEmojiClick);
+	    return () => element.removeEventListener("emoji-click", handleEmojiClick);
+	  }, [onEmojiSelect]);
+	  return /*#__PURE__*/jsxRuntimeExports.jsx("emoji-picker", {
+	    ref: ref,
+	    class: "light",
+	    style: {
+	      width: "100%"
+	    }
+	  });
+	}
+	function insertTextAtCursor(_ref3) {
+	  let {
+	    textarea,
+	    textToInsert,
+	    onValueChange,
+	    resizeTextarea
+	  } = _ref3;
+	  if (!textarea || !textToInsert) {
+	    return;
+	  }
+	  const currentValue = textarea.value || "";
+	  const selectionStart = textarea.selectionStart ?? currentValue.length;
+	  const selectionEnd = textarea.selectionEnd ?? selectionStart;
+	  const nextValue = `${currentValue.slice(0, selectionStart)}${textToInsert}${currentValue.slice(selectionEnd)}`;
+	  const nextCaretPosition = selectionStart + textToInsert.length;
+	  if (typeof onValueChange === "function") {
+	    onValueChange(nextValue);
+	  } else {
+	    textarea.value = nextValue;
+	  }
+	  requestAnimationFrame(() => {
+	    const activeTextarea = textarea;
+	    if (!activeTextarea) {
+	      return;
+	    }
+	    activeTextarea.focus();
+	    if (typeof activeTextarea.setSelectionRange === "function") {
+	      activeTextarea.setSelectionRange(nextCaretPosition, nextCaretPosition);
+	    }
+	    if (typeof resizeTextarea === "function") {
+	      resizeTextarea(activeTextarea);
+	    }
+	  });
+	}
+	function ComposerActions(_ref4) {
+	  let {
+	    textareaRef,
+	    onValueChange,
+	    resizeTextarea,
+	    disabled = false
+	  } = _ref4;
+	  const [isMenuOpen, setIsMenuOpen] = reactExports.useState(false);
+	  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = reactExports.useState(false);
+	  const actionsRootRef = reactExports.useRef(null);
+	  reactExports.useEffect(() => {
+	    if (!isMenuOpen) {
+	      return undefined;
+	    }
+	    const handleOutsidePointer = event => {
+	      const root = actionsRootRef.current;
+	      const eventPath = typeof event.composedPath === "function" ? event.composedPath() : [];
+	      const clickedInside = root ? eventPath.length > 0 ? eventPath.includes(root) : root.contains(event.target) : false;
+	      if (!clickedInside) {
+	        setIsMenuOpen(false);
+	        setIsEmojiPickerOpen(false);
+	      }
+	    };
+	    const handleEscape = event => {
+	      if (event.key === "Escape") {
+	        setIsMenuOpen(false);
+	        setIsEmojiPickerOpen(false);
+	      }
+	    };
+	    window.addEventListener("mousedown", handleOutsidePointer);
+	    window.addEventListener("keydown", handleEscape);
+	    return () => {
+	      window.removeEventListener("mousedown", handleOutsidePointer);
+	      window.removeEventListener("keydown", handleEscape);
+	    };
+	  }, [isMenuOpen]);
+	  const handleInsert = reactExports.useCallback(textToInsert => {
+	    insertTextAtCursor({
+	      textarea: textareaRef?.current,
+	      textToInsert,
+	      onValueChange,
+	      resizeTextarea
+	    });
+	    setIsMenuOpen(false);
+	    setIsEmojiPickerOpen(false);
+	  }, [onValueChange, resizeTextarea, textareaRef]);
+	  const handleEmojiSelect = reactExports.useCallback(emojiObj => {
+	    handleInsert(emojiObj?.native || "");
+	  }, [handleInsert]);
+	  return /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	    className: "teemboomComposerActions",
+	    ref: actionsRootRef,
+	    children: [isMenuOpen && /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	      className: "teemboomComposerOverlay",
+	      children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	        className: "teemboomComposerMenu",
+	        role: "menu",
+	        "aria-label": "Composer actions",
+	        children: COMPOSER_MENU_ACTIONS.map(action => /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          type: "button",
+	          role: "menuitem",
+	          className: `teemboomComposerMenuButton ${action.kind === "picker" && isEmojiPickerOpen ? "active" : ""} ${action.id === "emoji" ? "teemboomComposerEmojiButton" : ""}`.trim(),
+	          "aria-label": action.label,
+	          title: action.label,
+	          onClick: () => {
+	            if (action.kind === "picker") {
+	              setIsEmojiPickerOpen(previous => !previous);
+	              return;
+	            }
+	            handleInsert(action.text);
+	          },
+	          children: action.id === "emoji" ? /*#__PURE__*/jsxRuntimeExports.jsx("svg", {
+	            viewBox: "0 0 24 24",
+	            version: "1.1",
+	            xmlns: "http://www.w3.org/2000/svg",
+	            "aria-hidden": "true",
+	            focusable: "false",
+	            width: 23,
+	            height: 21,
+	            children: /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	              fill: "var(--teemboom-text)",
+	              fillRule: "nonzero",
+	              d: REACTION_ICON_PATH
+	            })
+	          }) : action.label
+	        }, action.id))
+	      }), isEmojiPickerOpen && /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	        className: "teemboomComposerEmojiPicker",
+	        children: /*#__PURE__*/jsxRuntimeExports.jsx(EmojiPickerElement, {
+	          onEmojiSelect: handleEmojiSelect
+	        })
+	      })]
+	    }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	      type: "button",
+	      className: `teemboomComposerPlusButton ${isMenuOpen ? "open" : ""}`,
+	      "aria-label": "Open composer actions",
+	      "aria-expanded": isMenuOpen,
+	      "aria-haspopup": "menu",
+	      disabled: disabled,
+	      onClick: () => {
+	        setIsMenuOpen(previous => {
+	          const nextOpen = !previous;
+	          if (!nextOpen) {
+	            setIsEmojiPickerOpen(false);
+	          }
+	          return nextOpen;
+	        });
+	      },
+	      children: /*#__PURE__*/jsxRuntimeExports.jsxs("svg", {
+	        viewBox: "0 0 24 24",
+	        fill: "none",
+	        xmlns: "http://www.w3.org/2000/svg",
+	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("g", {
+	          id: "SVGRepo_bgCarrier",
+	          "stroke-width": "0"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsx("g", {
+	          id: "SVGRepo_tracerCarrier",
+	          "stroke-linecap": "round",
+	          "stroke-linejoin": "round"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsxs("g", {
+	          id: "SVGRepo_iconCarrier",
+	          children: [" ", /*#__PURE__*/jsxRuntimeExports.jsx("circle", {
+	            opacity: "0.5",
+	            cx: "12",
+	            cy: "12",
+	            r: "10",
+	            stroke: "#000000",
+	            "stroke-width": "1.5"
+	          }), " ", /*#__PURE__*/jsxRuntimeExports.jsx("path", {
+	            d: "M15 12L12 12M12 12L9 12M12 12L12 9M12 12L12 15",
+	            stroke: "#000000",
+	            "stroke-width": "1.5",
+	            "stroke-linecap": "round"
+	          }), " "]
+	        })]
+	      })
+	    })]
+	  });
+	}
+	function ProfileMenu(_ref5) {
 	  let {
 	    user,
 	    authenticationType,
 	    onSignIn,
 	    onLogout,
 	    onClose
-	  } = _ref2;
+	  } = _ref5;
 	  const signedIn = authenticationType === "guest" ? true : Boolean(getUserIdentifier(user) && getUsername(user) !== "Anonymous");
 	  const heading = signedIn ? getUsername(user) : authenticationType === "username" ? "Set a username" : authenticationType === "guest" ? "Anonymous" : "Not Signed in";
 	  const actionLabel = authenticationType === "username" ? "Set username" : "Sign in";
@@ -4402,12 +4613,12 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function AuthFrame(_ref3) {
+	function AuthFrame(_ref6) {
 	  let {
 	    url,
 	    onClose,
 	    hidden = false
-	  } = _ref3;
+	  } = _ref6;
 	  return /*#__PURE__*/jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, {
 	    children: [!hidden && /*#__PURE__*/jsxRuntimeExports.jsx("div", {
 	      className: "teemboom_iframe_cover",
@@ -4422,13 +4633,13 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function UsernamePopup(_ref4) {
+	function UsernamePopup(_ref7) {
 	  let {
 	    value,
 	    onChange,
 	    onSave,
 	    onClose
-	  } = _ref4;
+	  } = _ref7;
 	  return /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
 	    className: "teemboom_popup_main",
 	    children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
@@ -4472,12 +4683,12 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function EditCommentPopup(_ref6) {
+	function EditCommentPopup(_ref9) {
 	  let {
 	    comment,
 	    onSave,
 	    onClose
-	  } = _ref6;
+	  } = _ref9;
 	  const [value, setValue] = reactExports.useState(comment?.content || "");
 	  const [saving, setSaving] = reactExports.useState(false);
 	  const [error, setError] = reactExports.useState("");
@@ -4555,11 +4766,11 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
-	function DeleteCommentPopup(_ref7) {
+	function DeleteCommentPopup(_ref0) {
 	  let {
 	    onConfirm,
 	    onClose
-	  } = _ref7;
+	  } = _ref0;
 	  const [deleting, setDeleting] = reactExports.useState(false);
 	  const [error, setError] = reactExports.useState("");
 	  const handleDelete = async () => {
@@ -4613,11 +4824,11 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
-	function ReportCommentPopup(_ref8) {
+	function ReportCommentPopup(_ref1) {
 	  let {
 	    onConfirm,
 	    onClose
-	  } = _ref8;
+	  } = _ref1;
 	  const [reason, setReason] = reactExports.useState("");
 	  const [submitting, setSubmitting] = reactExports.useState(false);
 	  const [done, setDone] = reactExports.useState(false);
@@ -4695,14 +4906,14 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
-	function CommentActionsMenu(_ref9) {
+	function CommentActionsMenu(_ref10) {
 	  let {
 	    comment,
 	    userId,
 	    onEdit,
 	    onDelete,
 	    onReport
-	  } = _ref9;
+	  } = _ref10;
 	  const [open, setOpen] = reactExports.useState(false);
 	  const menuRef = reactExports.useRef(null);
 	  const isOwner = userId && comment?.user_id && userId === comment.user_id;
@@ -4822,7 +5033,7 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function CommentItem(_ref0) {
+	function CommentItem(_ref11) {
 	  let {
 	    comment,
 	    replies,
@@ -4837,8 +5048,9 @@ var clear_land = (function (exports) {
 	    onLoadMoreReplies,
 	    onReport,
 	    onEdit,
-	    onDelete
-	  } = _ref0;
+	    onDelete,
+	    resizeTextarea
+	  } = _ref11;
 	  const [showReplies, setShowReplies] = reactExports.useState(false);
 	  const [loadingReplies, setLoadingReplies] = reactExports.useState(false);
 	  const [replyInput, setReplyInput] = reactExports.useState("");
@@ -4847,7 +5059,7 @@ var clear_land = (function (exports) {
 	  const [myReaction, setMyReaction] = reactExports.useState(comment?.my_reaction || null);
 	  const [isExpanded, setIsExpanded] = reactExports.useState(false);
 	  const [activePopup, setActivePopup] = reactExports.useState(null); // 'edit' | 'delete' | 'report'
-
+	  const replyInputRef = reactExports.useRef(null);
 	  const commentContent = typeof comment?.content === "string" ? comment.content : "";
 	  const {
 	    previewText,
@@ -4920,6 +5132,7 @@ var clear_land = (function (exports) {
 	    if (!createdReply) return;
 	    setReplyInput("");
 	    setShowReplies(true);
+	    requestAnimationFrame(() => resizeTextarea && resizeTextarea(replyInputRef.current));
 	  };
 	  const hasReactions = reactionCounts && Object.values(reactionCounts).some(v => Number(v) > 0);
 	  if (comment?.deleted) {
@@ -4969,28 +5182,31 @@ var clear_land = (function (exports) {
 	            children: [/*#__PURE__*/jsxRuntimeExports.jsxs("div", {
 	              className: "teemboomRepliesInput",
 	              children: [/*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+	                ref: replyInputRef,
 	                className: "teemboomReplyInput",
 	                placeholder: "Leave a reply...",
 	                value: replyInput,
 	                onChange: event => setReplyInput(event.target.value),
-	                onInput: event => {
-	                  const el = event.target;
-	                  el.style.height = "auto";
-	                  const next = Math.min(el.scrollHeight, 100);
-	                  el.style.height = `${next}px`;
-	                  el.style.overflowY = el.scrollHeight > 100 ? "auto" : "hidden";
-	                },
+	                onInput: event => resizeTextarea && resizeTextarea(event.target),
 	                onKeyDown: event => {
 	                  if (event.key === "Enter" && !event.shiftKey) {
 	                    event.preventDefault();
 	                    handleReplySend();
 	                  }
 	                }
-	              }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
-	                className: "teemboomReplySend",
-	                onClick: handleReplySend,
-	                disabled: sendingReply,
-	                children: "Reply"
+	              }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	                className: "teemboomComposerInputActions",
+	                children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	                  className: "teemboomReplySend",
+	                  onClick: handleReplySend,
+	                  disabled: sendingReply,
+	                  children: "Reply"
+	                }), /*#__PURE__*/jsxRuntimeExports.jsx(ComposerActions, {
+	                  textareaRef: replyInputRef,
+	                  onValueChange: setReplyInput,
+	                  resizeTextarea: resizeTextarea,
+	                  disabled: sendingReply
+	                })]
 	              })]
 	            }), loadingReplies ? /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	              className: "teemboomLoading",
@@ -5007,7 +5223,8 @@ var clear_land = (function (exports) {
 	              onLoadMoreReplies: onLoadMoreReplies,
 	              onReport: onReport,
 	              onEdit: onEdit,
-	              onDelete: onDelete
+	              onDelete: onDelete,
+	              resizeTextarea: resizeTextarea
 	            }, reply._id)) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	              className: "teemboomNoReplies",
 	              children: "No replies yet"
@@ -5100,28 +5317,31 @@ var clear_land = (function (exports) {
 	      children: [/*#__PURE__*/jsxRuntimeExports.jsxs("div", {
 	        className: "teemboomRepliesInput",
 	        children: [/*#__PURE__*/jsxRuntimeExports.jsx("textarea", {
+	          ref: replyInputRef,
 	          className: "teemboomReplyInput",
 	          placeholder: "Leave a reply...",
 	          value: replyInput,
 	          onChange: event => setReplyInput(event.target.value),
-	          onInput: event => {
-	            const el = event.target;
-	            el.style.height = "auto";
-	            const next = Math.min(el.scrollHeight, 100);
-	            el.style.height = `${next}px`;
-	            el.style.overflowY = el.scrollHeight > 100 ? "auto" : "hidden";
-	          },
+	          onInput: event => resizeTextarea && resizeTextarea(event.target),
 	          onKeyDown: event => {
 	            if (event.key === "Enter" && !event.shiftKey) {
 	              event.preventDefault();
 	              handleReplySend();
 	            }
 	          }
-	        }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
-	          className: "teemboomReplySend",
-	          onClick: handleReplySend,
-	          disabled: sendingReply,
-	          children: "Reply"
+	        }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
+	          className: "teemboomComposerInputActions",
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	            className: "teemboomReplySend",
+	            onClick: handleReplySend,
+	            disabled: sendingReply,
+	            children: "Reply"
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx(ComposerActions, {
+	            textareaRef: replyInputRef,
+	            onValueChange: setReplyInput,
+	            resizeTextarea: resizeTextarea,
+	            disabled: sendingReply
+	          })]
 	        })]
 	      }), loadingReplies ? /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	        className: "teemboomLoading",
@@ -5138,7 +5358,8 @@ var clear_land = (function (exports) {
 	        onLoadMoreReplies: onLoadMoreReplies,
 	        onReport: onReport,
 	        onEdit: onEdit,
-	        onDelete: onDelete
+	        onDelete: onDelete,
+	        resizeTextarea: resizeTextarea
 	      }, reply._id)) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	        className: "teemboomNoReplies",
 	        children: "No replies yet"
@@ -5162,12 +5383,12 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function Widget(_ref1) {
+	function Widget(_ref12) {
 	  let {
 	    pageId = "unknown",
 	    apiUrl,
 	    colorMode
-	  } = _ref1;
+	  } = _ref12;
 	  const [commentsById, setCommentsById] = reactExports.useState({});
 	  const commentsByIdRef = reactExports.useRef({});
 	  const [topLevelIds, setTopLevelIds] = reactExports.useState([]);
@@ -5587,8 +5808,8 @@ var clear_land = (function (exports) {
 	    const allColors = config.colors || {};
 	    const palette = allColors[activeMode] || allColors["light"] || allColors;
 	    const font = config.font || {};
-	    Object.entries(palette).forEach(_ref10 => {
-	      let [key, value] = _ref10;
+	    Object.entries(palette).forEach(_ref13 => {
+	      let [key, value] = _ref13;
 	      root.style.setProperty(`--teemboom-${key}`, String(value));
 	    });
 
@@ -5999,14 +6220,17 @@ var clear_land = (function (exports) {
 	              handleSend(e.target);
 	            }
 	          }
-	        }), /*#__PURE__*/jsxRuntimeExports.jsx("div", {
+	        }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
 	          className: "teemboomWriteActions",
-	          children: /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	          children: [/*#__PURE__*/jsxRuntimeExports.jsx("button", {
 	            type: "button",
 	            className: "teemboomWriteActionSubmit",
 	            onClick: () => handleSend(commentInputRef.current),
 	            children: "Comment"
-	          })
+	          }), /*#__PURE__*/jsxRuntimeExports.jsx(ComposerActions, {
+	            textareaRef: commentInputRef,
+	            resizeTextarea: resizeCommentInput
+	          })]
 	        })]
 	      }), /*#__PURE__*/jsxRuntimeExports.jsx("div", {
 	        id: "teemboomCommentsBox",
@@ -6032,7 +6256,8 @@ var clear_land = (function (exports) {
 	            onLoadMoreReplies: handleLoadMoreReplies,
 	            onReport: handleReport,
 	            onEdit: handleEdit,
-	            onDelete: handleDelete
+	            onDelete: handleDelete,
+	            resizeTextarea: resizeCommentInput
 	          }, commentId);
 	        }) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	          className: "teemboomNoComments",
@@ -6058,7 +6283,7 @@ var clear_land = (function (exports) {
 	  });
 	}
 
-	var css_248z = ":host{all:initial}.teemboom_container{container-name:teemboom-widget;container-type:inline-size;display:block;width:100%}.teemboom_root,.teemboom_root *{box-sizing:border-box;font-family:var(--teemboom-font-family,\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif)}.teemboom_root{--tb-accent:var(--teemboom-primary,#4f46e5);--tb-accent-soft:color-mix(in srgb,var(--tb-accent) 14%,#fff);--tb-bg:var(--teemboom-main,#fff);--tb-surface:color-mix(in srgb,var(--tb-bg) 96%,#f6f8fb);--tb-surface-strong:color-mix(in srgb,var(--tb-bg) 90%,#eef2ff);--tb-border:color-mix(in srgb,var(--teemboom-border,#cbd5e1) 50%,transparent);--tb-border-strong:color-mix(in srgb,var(--teemboom-border,#94a3b8) 40%,transparent);--tb-text:var(--teemboom-text,#0f172a);--tb-text-muted:var(--teemboom-text_muted,#64748b);--tb-comment-bg:var(--teemboom-comment_bg,#fff);--tb-input-bg:var(--teemboom-input_bg,#fff);--tb-picker-bg:var(--teemboom-picker_bg,#fff);--tb-popup-bg:var(--teemboom-popup_bg,#fff);--tb-comment-text:var(--teemboom-comment_text,#1e293b);--tb-placeholder:var(--teemboom-placeholder,#6b7280);--tb-send-btn-bg:var(--teemboom-send_button_bg,#2563eb);--tb-send-btn-hover:var(--teemboom-send_button_hover_bg,#1d4ed8);--tb-send-btn-text:var(--teemboom-send_button_text,#fff);--tb-cancel-text:var(--teemboom-cancel_text,#374151);--tb-cancel-hover-bg:var(--teemboom-cancel_hover_bg,#f3f4f6);--tb-pinned-text:var(--teemboom-pinned_text,#b45309);--tb-pinned-bg:var(--teemboom-pinned_bg,#fffbeb);--tb-pinned-border:var(--teemboom-pinned_border,#fde68a);border-radius:16px;color:var(--tb-text);display:flex;flex-direction:column;font-size:var(--teemboom-pc-font-size,15px);line-height:1.45;position:relative;width:100%}#teemboomWriteComment,.teemboomWriteComment{align-items:center;background:var(--tb-input-bg);border-bottom:1px solid var(--tb-border);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;margin:14px 0;padding:10px 12px}.teemboomMainProfilePic{cursor:pointer;flex-shrink:0;transition:transform .2s ease}.teemboomMainProfilePic:hover{transform:translateY(-1px)}#teemboomCommentInput{align-self:center;background:transparent;border:none;border-radius:0;flex:1;font-family:inherit;line-height:1.35;margin:0;max-height:100px;min-height:28px;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}#teemboomCommentInput,.teemboomUsernameInput{color:var(--tb-text);font-size:.8em;outline:none}.teemboomUsernameInput{background:var(--tb-input-bg);border:1px solid var(--tb-border);border-radius:10px;min-width:0;padding:8px 10px;transition:border-color .15s ease,box-shadow .15s ease;width:140px}.teemboomUsernameInput:focus{border-color:color-mix(in srgb,var(--tb-accent) 45%,#cbd5e1);box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-accent) 12%,transparent)}.teemboomUsernameInput::placeholder{color:var(--tb-placeholder)}#teemboomCommentInput:focus{border:none;box-shadow:none}#teemboomCommentInput::placeholder,.teemboomReplyInput::placeholder{color:var(--tb-placeholder)}.teemboomWriteActions{align-items:center;display:flex;gap:6px;margin-left:auto}.teemboomWriteActionCancel,.teemboomWriteActionSubmit{background:transparent;border:0;border-radius:2px;cursor:pointer;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomWriteActionCancel{color:var(--tb-cancel-text)}.teemboomWriteActionCancel:hover{background:var(--tb-cancel-hover-bg)}.teemboomWriteActionSubmit{background:var(--tb-send-btn-bg);color:var(--tb-send-btn-text)}.teemboomWriteActionSubmit:hover{background:var(--tb-send-btn-hover)}#teemboomCommentsBox,.teemboomCommentsBox{background:transparent;flex:1;overflow-y:auto;padding:10px 0}.teemboomComment{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:14px;display:flex;flex-direction:column;gap:9px;margin:0 0 10px;padding:12px;position:relative;transition:border-color .2s ease,box-shadow .2s ease}.teemboomComment:hover{box-shadow:0 6px 16px rgba(2,8,23,.05)}.teemboomComment:hover .teemboomCommentActionsBtn{display:flex}.teemboomComment:last-child{margin-bottom:12px}.teemboomComment.deleted{background-color:#fafafa;color:#6b6b6b;opacity:.88}.teemboomDeletedLayout{align-items:flex-start;display:flex;gap:10px}.teemboomDeletedIcon{align-items:center;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:50%;color:#7c7c84;display:flex;flex-shrink:0;height:40px;justify-content:center;width:40px}.teemboomDeletedContent{display:flex;flex:1;flex-direction:column;gap:8px;min-width:0}.teemboomComment.deleted .teemboomCommentEngage,.teemboomComment.deleted .teemboomcommentText{padding-left:0}.teemboomComment.deleted .teemboomReplies{margin-left:0}.teemboomCommentActions{position:absolute;right:0;top:-9px;z-index:10}.teemboomCommentActionsBtn{align-items:center;background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:6px;box-shadow:0 1px 4px rgba(2,8,23,.08);color:var(--tb-text-muted);cursor:pointer;display:flex;display:none;height:20px;justify-content:center;padding:0;transition:background .15s,color .15s;width:24px}.teemboomCommentActionsBtn:hover{background:var(--tb-border);color:var(--tb-text)}.teemboomCommentActionsDropdown{background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:10px;box-shadow:0 8px 24px rgba(2,8,23,.1);display:flex;flex-direction:column;min-width:148px;overflow:hidden;position:absolute;right:0;top:calc(100% + 4px);z-index:100}.teemboomCommentActionsDropdown button{align-items:center;background:none;border:none;color:var(--tb-text);cursor:pointer;display:flex;font-size:.85em;gap:8px;padding:9px 14px;text-align:left;transition:background .12s}.teemboomCommentActionsDropdown button:hover{background:var(--tb-border)}.teemboomCommentActionsDropdown button.teemboomActionsReport{color:#e53e3e}.teemboomPinned{background:var(--tb-pinned-bg);border:1px solid var(--tb-pinned-border);border-radius:999px;color:var(--tb-pinned-text);font-size:.8em;font-weight:600;margin-bottom:2px;padding:3px 10px;width:fit-content}.teemboomCommentMeta{align-items:flex-start;display:flex;gap:10px}.teemboomcommentProfilePic{flex-shrink:0}.teemboomCommentTitle{display:flex;flex:1;flex-direction:column;gap:3px}.teemboomCommentTitle p{color:var(--tb-text);font-size:.87em;font-weight:700;margin:0}.teemboomCommentTitle span{color:var(--tb-text-muted);font-size:.8em}.teemboomReactions{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto;position:relative}.teemboomReactionPickerButton,.teemboomReactionPickerItem,.teemboomReactionPill{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;cursor:pointer;transition:border-color .2s ease,background-color .2s ease,transform .12s ease}.teemboomReactionPill{align-items:center;display:inline-flex;gap:6px;min-height:30px;padding:4px 8px}.teemboomReactionPickerButton:hover,.teemboomReactionPickerItem:hover,.teemboomReactionPill:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 35%,#cbd5e1)}.teemboomReactionPickerItem.active,.teemboomReactionPill.active{background:color-mix(in srgb,var(--tb-accent) 15%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionEmoji{font-size:1em;line-height:1}.teemboomReactionCount{color:var(--tb-text-muted);font-size:.8em;font-weight:700;line-height:1}.teemboomReactionPill.active .teemboomReactionCount{color:color-mix(in srgb,var(--tb-accent) 75%,#0f172a)}.teemboomReactionPickerButton{align-items:center;display:inline-flex;font-size:.87em;gap:3px;justify-content:center;min-height:30px;min-width:36px;padding:4px 8px}.teemboomReactionPickerButton.open{background:color-mix(in srgb,var(--tb-accent) 10%,#fff);border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionPickerPlus{color:var(--tb-text-muted);font-size:.73em;font-weight:700}.teemboomReactionPicker{background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:12px;box-shadow:0 14px 34px rgba(2,8,23,.18);display:grid;gap:6px;grid-template-columns:repeat(5,minmax(0,1fr));min-width:220px;padding:8px;position:absolute;right:0;top:calc(100% + 8px);z-index:20}.teemboomReactionPickerItem{align-items:center;border-radius:10px;display:inline-flex;font-size:1.2em;height:32px;justify-content:center;width:36px}.teemboomReactionPickerMoreButton{color:var(--tb-text-muted);font-size:1.2em;font-weight:700}.teemboomReactionFullPicker{border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-width:min(90vw,360px);overflow:hidden;position:absolute;right:0;top:calc(100% + 8px);z-index:25}.teemboomReactionFullPicker em-emoji-picker{--border-radius:16px;--category-icon-size:18px;--font-family:inherit;--font-size:13px;--shadow:none;border:1px solid var(--tb-border);border-radius:16px;height:400px;max-width:min(90vw,360px);width:100%}.teemboomReactionPickerButton:disabled,.teemboomReactionPickerItem:disabled,.teemboomReactionPill:disabled{cursor:not-allowed;opacity:.5;transform:none}.teemboomReactionsPillsBar{display:none}.teemboomcommentText{color:var(--tb-comment-text);font-size:1em;line-height:1.6;overflow-wrap:anywhere;padding:0 0 0 50px;white-space:pre-wrap;word-break:break-word}.teemboomcommentText.collapsed{max-height:180px;overflow:hidden}.teemboomReadMoreToggle{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;margin-left:50px;padding:0}.teemboomReadMoreToggle:hover{text-decoration:underline}.teemboomCommentEngage{display:flex;gap:12px;margin-top:4px;padding:0 0 0 50px}.teemboomReplyButton{align-items:center;color:var(--tb-text-muted);cursor:pointer;display:flex;font-size:.8em;gap:5px;transition:color .2s ease}.teemboomReplyButton:hover{color:var(--tb-accent)}.teemboomReplyButton p{font-size:1em;font-weight:600;margin:0}.teemboomReplyButton svg{height:14px;width:14px}.teemboomReplyNumber{font-size:1em;font-weight:600;margin-left:2px}.teemboomReplies{border-top:1px dashed var(--tb-border);display:flex;flex-direction:column;gap:8px;margin-left:50px;margin-top:10px;padding:12px 0 0;position:relative}.teemboomRepliesInput{align-items:center;background:var(--tb-input-bg);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;padding:2px 12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomRepliesInput:focus-within{border-color:color-mix(in srgb,var(--tb-accent) 48%,#94a3b8)}.teemboomReplyInput{align-self:center;background:transparent;border:none;border-radius:0;color:var(--tb-text);flex:1;font-family:inherit;font-size:.8em;height:30px;line-height:1.35;margin:0;max-height:100px;min-height:15px;outline:none;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}.teemboomReplyInput:focus{border:none;box-shadow:none}.teemboomReplySend{align-self:center;background:var(--tb-send-btn-bg);border:0;border-radius:2px;color:var(--tb-send-btn-text);cursor:pointer;flex-shrink:0;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomReplySend:hover{background:var(--tb-send-btn-hover)}.teemboomReplySend:disabled{cursor:not-allowed;opacity:.5}.teemboomComment .teemboomComment{margin:8px 0 0}.teemboomLoadMoreReplies{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;padding:0}.teemboomLoading,.teemboomNoComments,.teemboomNoReplies{color:var(--tb-text-muted);font-size:.87em;margin:0;padding:20px;text-align:center}.teemboom_profile_avatar{align-items:center;border-radius:50%;box-shadow:inset 0 0 0 1px hsla(0,0%,100%,.2),0 4px 12px rgba(0,0,0,.18);color:#fff;display:inline-flex;font-weight:700;justify-content:center;user-select:none}.teemboom_popup_main{inset:0;position:absolute;z-index:200}.teemboom_popup_partition{background:transparent;inset:0;position:absolute}.teemboom_popup{background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 18px 40px rgba(2,8,23,.18);left:10px;padding:14px;position:absolute;top:64px;width:240px;z-index:210}.teemboom_popup_close{color:var(--tb-text-muted);cursor:pointer;font-size:1.07em;line-height:1;margin-bottom:8px;text-align:right}.teemboom_popup button{background:var(--tb-surface-strong);border:1px solid color-mix(in srgb,var(--tb-accent) 30%,#cbd5e1);border-radius:10px;color:#111827;cursor:pointer;font-weight:600;padding:8px 12px}.teemboom_iframe_cover{backdrop-filter:blur(2px);background:rgba(15,23,42,.22);inset:0;position:fixed;z-index:998}.teemboom_iframe{background:var(--tb-popup-bg);border:none;border-radius:14px;box-shadow:0 24px 60px rgba(2,8,23,.35);height:500px;left:50%;max-height:90vh;max-width:90vw;position:fixed;top:50%;transform:translate(-50%,-50%);width:400px;z-index:999}.teemboomActionsDelete{color:#e53e3e}.teemboomModalOverlay{align-items:center;backdrop-filter:blur(2px);background:rgba(15,23,42,.35);display:flex;inset:0;justify-content:center;position:fixed;z-index:1000}.teemboomModal{background:var(--tb-popup-bg,#fff);border:1px solid var(--tb-border);border-radius:16px;box-shadow:0 24px 60px rgba(2,8,23,.22);display:flex;flex-direction:column;gap:14px;max-width:calc(100vw - 32px);padding:20px;width:440px}.teemboomModalSm{width:360px}.teemboomModalHeader{align-items:center;color:var(--tb-text);display:flex;font-size:.95em;font-weight:700;justify-content:space-between}.teemboomModalClose{background:none;border:none;border-radius:6px;color:var(--tb-text-muted);cursor:pointer;font-size:1em;line-height:1;padding:2px 6px;transition:background .12s}.teemboomModalClose:hover{background:var(--tb-border)}.teemboomModalBody{color:var(--tb-text-muted);font-size:.88em;line-height:1.5;margin:0}.teemboomModalTextarea{background:var(--tb-surface-strong,#f8fafc);border:1px solid var(--tb-border);border-radius:10px;box-sizing:border-box;color:var(--tb-text);font-family:inherit;font-size:.88em;line-height:1.5;outline:none;padding:10px 12px;resize:vertical;transition:border-color .15s;width:100%}.teemboomModalTextarea:focus{border-color:var(--tb-accent,#4285f4)}.teemboomModalError{color:#e53e3e;font-size:.82em;margin:0}.teemboomModalActions{display:flex;gap:8px;justify-content:flex-end}.teemboomModalCancel{background:none;border:1px solid var(--tb-border);border-radius:10px;color:var(--tb-text-muted);cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:background .12s}.teemboomModalCancel:hover{background:var(--tb-border)}.teemboomModalConfirm{background:var(--tb-accent,#4285f4);border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalConfirm:hover:not(:disabled){opacity:.88}.teemboomModalConfirm:disabled{cursor:not-allowed;opacity:.55}.teemboomModalDanger{background:#e53e3e;border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalDanger:hover:not(:disabled){opacity:.88}.teemboomModalDanger:disabled{cursor:not-allowed;opacity:.55}#teemboomCommentsBox::-webkit-scrollbar{width:8px}#teemboomCommentsBox::-webkit-scrollbar-track{background:transparent}#teemboomCommentsBox::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tb-accent) 28%,#cbd5e1);border-radius:999px}#teemboomCommentsBox::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--tb-accent) 40%,#94a3b8)}@container teemboom-widget (641px <= width <= 1024px){.teemboom_root{font-size:var(--teemboom-tablet-font-size,14px)}}@container teemboom-widget (width <= 600px){.teemboom_root{border-radius:12px;font-size:var(--teemboom-mobile-font-size,13px)}#teemboomWriteComment,.teemboomWriteComment{align-items:flex-start;flex-wrap:wrap;gap:5px;padding:12px 12px 5px}#teemboomCommentInput{border-bottom:1px solid var(--tb-border);flex:1 1 0;min-width:0}.teemboomWriteActions{display:flex;flex-basis:100%;justify-content:flex-end;padding-left:36px}.teemboomRepliesInput{align-items:flex-start;flex-wrap:wrap;gap:4px;padding-bottom:5px}.teemboomReplyInput{border-bottom:1px solid var(--tb-border);flex:1 1 100%;min-width:0}.teemboomReplySend{margin-left:auto}.teemboomComment{margin:0 0 10px;overflow:visible;padding:10px;position:relative}.teemboomComment.has-reactions{margin-bottom:32px}.teemboomComment.has-reactions:last-child{margin-bottom:52px}.teemboomComment .teemboomComment{margin:8px 0 0;overflow:visible}.teemboomComment .teemboomComment.has-reactions,.teemboomReplies{margin-bottom:15px}.teemboomReplies{margin-left:0;padding-left:0}.teemboomReplies:before{display:none}.teemboomRepliesInput{border-radius:3px}.teemboom_iframe{height:min(85vh,560px);width:calc(100vw - 20px)}.teemboomCommentMeta .teemboomReactions .teemboomReactionPill{display:none}.teemboomReactionsPillsBar{display:flex}.teemboomCommentMeta .teemboomReactions{background:transparent;border:none;border-radius:0;box-shadow:none;flex-wrap:nowrap;margin-left:auto;overflow-x:visible;padding:0}.teemboomReactionsPillsBar{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;box-shadow:0 2px 10px rgba(2,8,23,.12);flex-wrap:nowrap;justify-content:flex-start;margin-left:0;max-width:calc(100% - 20px);overflow-x:auto;padding:2px 4px;position:absolute;right:0;scrollbar-width:none;top:calc(100% - 13px);z-index:5}.teemboomReactionsPillsBar::-webkit-scrollbar{display:none}.teemboomReactionFullPicker,.teemboomReactionPicker{bottom:auto;left:auto;right:0;top:calc(100% + 8px)}.teemboomReactionFullPicker{max-width:min(90vw,320px)}}@media (prefers-reduced-motion:reduce){.teemboom_root,.teemboom_root *{animation:none!important;transition:none!important}}";
+	var css_248z = ":host{all:initial}.teemboom_container{container-name:teemboom-widget;container-type:inline-size;display:block;width:100%}.teemboom_root,.teemboom_root *{box-sizing:border-box;font-family:var(--teemboom-font-family,\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif)}.teemboom_root{--tb-accent:var(--teemboom-primary,#4f46e5);--tb-accent-soft:color-mix(in srgb,var(--tb-accent) 14%,#fff);--tb-bg:var(--teemboom-main,#fff);--tb-surface:color-mix(in srgb,var(--tb-bg) 96%,#f6f8fb);--tb-surface-strong:color-mix(in srgb,var(--tb-bg) 90%,#eef2ff);--tb-border:color-mix(in srgb,var(--teemboom-border,#cbd5e1) 50%,transparent);--tb-border-strong:color-mix(in srgb,var(--teemboom-border,#94a3b8) 40%,transparent);--tb-text:var(--teemboom-text,#0f172a);--tb-text-muted:var(--teemboom-text_muted,#64748b);--tb-comment-bg:var(--teemboom-comment_bg,#fff);--tb-input-bg:var(--teemboom-input_bg,#fff);--tb-picker-bg:var(--teemboom-picker_bg,#fff);--tb-popup-bg:var(--teemboom-popup_bg,#fff);--tb-comment-text:var(--teemboom-comment_text,#1e293b);--tb-placeholder:var(--teemboom-placeholder,#6b7280);--tb-send-btn-bg:var(--teemboom-send_button_bg,#2563eb);--tb-send-btn-hover:var(--teemboom-send_button_hover_bg,#1d4ed8);--tb-send-btn-text:var(--teemboom-send_button_text,#fff);--tb-cancel-text:var(--teemboom-cancel_text,#374151);--tb-cancel-hover-bg:var(--teemboom-cancel_hover_bg,#f3f4f6);--tb-pinned-text:var(--teemboom-pinned_text,#b45309);--tb-pinned-bg:var(--teemboom-pinned_bg,#fffbeb);--tb-pinned-border:var(--teemboom-pinned_border,#fde68a);border-radius:16px;color:var(--tb-text);display:flex;flex-direction:column;font-size:var(--teemboom-pc-font-size,15px);line-height:1.45;position:relative;width:100%}#teemboomWriteComment,.teemboomWriteComment{align-items:center;background:var(--tb-input-bg);border-bottom:1px solid var(--tb-border);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;margin:14px 0;padding:10px 12px}.teemboomMainProfilePic{cursor:pointer;flex-shrink:0;transition:transform .2s ease}.teemboomMainProfilePic:hover{transform:translateY(-1px)}#teemboomCommentInput{align-self:center;background:transparent;border:none;border-radius:0;flex:1;font-family:inherit;line-height:1.35;margin:0;max-height:100px;min-height:28px;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}#teemboomCommentInput,.teemboomUsernameInput{color:var(--tb-text);font-size:.8em;outline:none}.teemboomUsernameInput{background:var(--tb-input-bg);border:1px solid var(--tb-border);border-radius:10px;min-width:0;padding:8px 10px;transition:border-color .15s ease,box-shadow .15s ease;width:140px}.teemboomUsernameInput:focus{border-color:color-mix(in srgb,var(--tb-accent) 45%,#cbd5e1);box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-accent) 12%,transparent)}.teemboomUsernameInput::placeholder{color:var(--tb-placeholder)}#teemboomCommentInput:focus{border:none;box-shadow:none}#teemboomCommentInput::placeholder,.teemboomReplyInput::placeholder{color:var(--tb-placeholder)}.teemboomComposerInputActions,.teemboomWriteActions{align-items:center;display:flex;gap:6px;margin-left:auto}.teemboomComposerActions{align-items:center;display:inline-flex;flex-shrink:0;position:relative}.teemboomComposerOverlay{align-items:flex-end;bottom:100%;display:flex;flex-direction:column;gap:8px;position:absolute;right:0;z-index:180}.teemboomComposerMenu{align-items:center;background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 14px 34px rgba(2,8,23,.16);display:flex;gap:6px;justify-content:flex-end;white-space:nowrap;width:300px}.teemboomComposerMenuButton,.teemboomComposerPlusButton{background:var(--tb-comment-bg);border:none;color:var(--tb-text);cursor:pointer;transition:border-color .18s ease,background-color .18s ease,transform .12s ease}.teemboomComposerMenuButton:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 40%,#cbd5e1)}.teemboomComposerMenuButton.active{background:color-mix(in srgb,var(--tb-accent) 12%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomComposerMenuButton{border-radius:999px;font-size:.72em;font-weight:700;line-height:1;padding:3px 5px}.teemboomComposerEmojiButton{align-items:center;display:inline-flex;height:26px;justify-content:center;width:38px}.teemboomComposerEmojiButton svg{height:18px;width:20px}.teemboomComposerPlusButton{align-items:center;display:inline-flex;height:26px;justify-content:center;padding:0;width:26px}.teemboomComposerEmojiPicker{background:var(--tb-picker-bg);border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-height:min(56vh,360px);max-width:min(90vw,320px);overflow:hidden;position:absolute;top:0;width:min(90vw,320px)}.teemboomComposerEmojiPicker em-emoji-picker,.teemboomComposerEmojiPicker emoji-picker{--border-radius:16px;--category-icon-size:18px;--font-family:inherit;--font-size:13px;--shadow:none;background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:16px;color:var(--tb-text);display:block;height:min(56vh,360px);width:100%}.teemboomWriteActionCancel,.teemboomWriteActionSubmit{background:transparent;border:0;border-radius:2px;cursor:pointer;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomWriteActionCancel{color:var(--tb-cancel-text)}.teemboomWriteActionCancel:hover{background:var(--tb-cancel-hover-bg)}.teemboomWriteActionSubmit{background:var(--tb-send-btn-bg);color:var(--tb-send-btn-text)}.teemboomWriteActionSubmit:hover{background:var(--tb-send-btn-hover)}#teemboomCommentsBox,.teemboomCommentsBox{background:transparent;flex:1;overflow-y:auto;padding:10px 0}.teemboomComment{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:14px;display:flex;flex-direction:column;gap:9px;margin:0 0 10px;padding:12px;position:relative;transition:border-color .2s ease,box-shadow .2s ease}.teemboomComment:hover{box-shadow:0 6px 16px rgba(2,8,23,.05)}.teemboomComment:hover .teemboomCommentActionsBtn{display:flex}.teemboomComment:last-child{margin-bottom:12px}.teemboomDeletedLayout{align-items:flex-start;display:flex;gap:10px}.teemboomDeletedIcon{align-items:center;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:50%;color:#7c7c84;display:flex;flex-shrink:0;height:40px;justify-content:center;width:40px}.teemboomDeletedContent{display:flex;flex:1;flex-direction:column;gap:8px;min-width:0}.teemboomComment.deleted .teemboomCommentEngage,.teemboomComment.deleted .teemboomcommentText{padding-left:0}.teemboomComment.deleted .teemboomReplies{margin-left:0}.teemboomCommentActions{position:absolute;right:0;top:-9px;z-index:10}.teemboomCommentActionsBtn{align-items:center;background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:6px;box-shadow:0 1px 4px rgba(2,8,23,.08);color:var(--tb-text-muted);cursor:pointer;display:flex;display:none;height:20px;justify-content:center;padding:0;transition:background .15s,color .15s;width:24px}.teemboomCommentActionsBtn:hover{background:var(--tb-border);color:var(--tb-text)}.teemboomCommentActionsDropdown{background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:10px;box-shadow:0 8px 24px rgba(2,8,23,.1);display:flex;flex-direction:column;min-width:148px;overflow:hidden;position:absolute;right:0;top:calc(100% + 4px);z-index:100}.teemboomCommentActionsDropdown button{align-items:center;background:none;border:none;color:var(--tb-text);cursor:pointer;display:flex;font-size:.85em;gap:8px;padding:9px 14px;text-align:left;transition:background .12s}.teemboomCommentActionsDropdown button:hover{background:var(--tb-border)}.teemboomCommentActionsDropdown button.teemboomActionsReport{color:#e53e3e}.teemboomPinned{background:var(--tb-pinned-bg);border:1px solid var(--tb-pinned-border);border-radius:999px;color:var(--tb-pinned-text);font-size:.8em;font-weight:600;margin-bottom:2px;padding:3px 10px;width:fit-content}.teemboomCommentMeta{align-items:flex-start;display:flex;gap:10px}.teemboomcommentProfilePic{flex-shrink:0}.teemboomCommentTitle{display:flex;flex:1;flex-direction:column;gap:3px}.teemboomCommentTitle p{color:var(--tb-text);font-size:.87em;font-weight:700;margin:0}.teemboomCommentTitle span{color:var(--tb-text-muted);font-size:.8em}.teemboomReactions{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto;position:relative}.teemboomReactionPickerButton,.teemboomReactionPickerItem,.teemboomReactionPill{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;cursor:pointer;transition:border-color .2s ease,background-color .2s ease,transform .12s ease}.teemboomReactionPill{align-items:center;display:inline-flex;gap:6px;min-height:30px;padding:4px 8px}.teemboomReactionPickerButton:hover,.teemboomReactionPickerItem:hover,.teemboomReactionPill:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 35%,#cbd5e1)}.teemboomReactionPickerItem.active,.teemboomReactionPill.active{background:color-mix(in srgb,var(--tb-accent) 15%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionEmoji{font-size:1em;line-height:1}.teemboomReactionCount{color:var(--tb-text-muted);font-size:.8em;font-weight:700;line-height:1}.teemboomReactionPill.active .teemboomReactionCount{color:color-mix(in srgb,var(--tb-accent) 75%,#0f172a)}.teemboomReactionPickerButton{align-items:center;display:inline-flex;font-size:.87em;gap:3px;justify-content:center;min-height:30px;min-width:36px;padding:4px 8px}.teemboomReactionPickerButton.open{background:color-mix(in srgb,var(--tb-accent) 10%,#fff);border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionPickerPlus{color:var(--tb-text-muted);font-size:.73em;font-weight:700}.teemboomReactionPicker{background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:12px;box-shadow:0 14px 34px rgba(2,8,23,.18);display:grid;gap:6px;grid-template-columns:repeat(5,minmax(0,1fr));min-width:220px;padding:8px;position:absolute;right:0;top:calc(100% + 8px);z-index:20}.teemboomReactionPickerItem{align-items:center;border-radius:10px;display:inline-flex;font-size:1.2em;height:32px;justify-content:center;width:36px}.teemboomReactionPickerMoreButton{color:var(--tb-text-muted);font-size:1.2em;font-weight:700}.teemboomReactionFullPicker{background:var(--tb-picker-bg);border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-width:min(90vw,360px);overflow:hidden;position:absolute;right:0;top:calc(100% + 8px);width:min(90vw,360px);z-index:25}.teemboomReactionFullPicker em-emoji-picker,.teemboomReactionFullPicker emoji-picker{--border-radius:16px;--category-icon-size:18px;--font-family:inherit;--font-size:13px;--shadow:none;background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:16px;color:var(--tb-text);display:block;height:400px;max-width:min(90vw,360px);width:100%}.teemboomReactionPickerButton:disabled,.teemboomReactionPickerItem:disabled,.teemboomReactionPill:disabled{cursor:not-allowed;opacity:.5;transform:none}.teemboomReactionsPillsBar{display:none}.teemboomcommentText{color:var(--tb-comment-text);font-size:1em;line-height:1.6;overflow-wrap:anywhere;padding:0 0 0 50px;white-space:pre-wrap;word-break:break-word}.teemboomcommentText.collapsed{max-height:180px;overflow:hidden}.teemboomReadMoreToggle{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;margin-left:50px;padding:0}.teemboomReadMoreToggle:hover{text-decoration:underline}.teemboomCommentEngage{display:flex;gap:12px;margin-top:4px;padding:0 0 0 50px}.teemboomReplyButton{align-items:center;color:var(--tb-text-muted);cursor:pointer;display:flex;font-size:.8em;gap:5px;transition:color .2s ease}.teemboomReplyButton:hover{color:var(--tb-accent)}.teemboomReplyButton p{font-size:1em;font-weight:600;margin:0}.teemboomReplyButton svg{height:14px;width:14px}.teemboomReplyNumber{font-size:1em;font-weight:600;margin-left:2px}.teemboomReplies{border-top:1px dashed var(--tb-border);display:flex;flex-direction:column;gap:8px;margin-left:50px;margin-top:10px;padding:12px 0 0;position:relative}.teemboomRepliesInput{align-items:center;background:var(--tb-input-bg);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;padding:2px 12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomRepliesInput:focus-within{border-color:color-mix(in srgb,var(--tb-accent) 48%,#94a3b8)}.teemboomReplyInput{align-self:center;background:transparent;border:none;border-radius:0;color:var(--tb-text);flex:1;font-family:inherit;font-size:.8em;height:30px;line-height:1.35;margin:0;max-height:100px;min-height:15px;outline:none;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}.teemboomReplyInput:focus{border:none;box-shadow:none}.teemboomReplySend{align-self:center;background:var(--tb-send-btn-bg);border:0;border-radius:2px;color:var(--tb-send-btn-text);cursor:pointer;flex-shrink:0;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomReplySend:hover{background:var(--tb-send-btn-hover)}.teemboomReplySend:disabled{cursor:not-allowed;opacity:.5}.teemboomComment .teemboomComment{margin:8px 0 0}.teemboomLoadMoreReplies{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;padding:0}.teemboomLoading,.teemboomNoComments,.teemboomNoReplies{color:var(--tb-text-muted);font-size:.87em;margin:0;padding:20px;text-align:center}.teemboom_profile_avatar{align-items:center;border-radius:50%;box-shadow:inset 0 0 0 1px hsla(0,0%,100%,.2),0 4px 12px rgba(0,0,0,.18);color:#fff;display:inline-flex;font-weight:700;justify-content:center;user-select:none}.teemboom_popup_main{inset:0;position:absolute;z-index:200}.teemboom_popup_partition{background:transparent;inset:0;position:absolute}.teemboom_popup{background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 18px 40px rgba(2,8,23,.18);left:10px;padding:14px;position:absolute;top:64px;width:240px;z-index:210}.teemboom_popup_close{color:var(--tb-text-muted);cursor:pointer;font-size:1.07em;line-height:1;margin-bottom:8px;text-align:right}.teemboom_popup button{background:var(--tb-surface-strong);border:1px solid color-mix(in srgb,var(--tb-accent) 30%,#cbd5e1);border-radius:10px;color:#111827;cursor:pointer;font-weight:600;padding:8px 12px}.teemboom_iframe_cover{backdrop-filter:blur(2px);background:rgba(15,23,42,.22);inset:0;position:fixed;z-index:998}.teemboom_iframe{background:var(--tb-popup-bg);border:none;border-radius:14px;box-shadow:0 24px 60px rgba(2,8,23,.35);height:500px;left:50%;max-height:90vh;max-width:90vw;position:fixed;top:50%;transform:translate(-50%,-50%);width:400px;z-index:999}.teemboomActionsDelete{color:#e53e3e}.teemboomModalOverlay{align-items:center;backdrop-filter:blur(2px);background:rgba(15,23,42,.35);display:flex;inset:0;justify-content:center;position:fixed;z-index:1000}.teemboomModal{background:var(--tb-popup-bg,#fff);border:1px solid var(--tb-border);border-radius:16px;box-shadow:0 24px 60px rgba(2,8,23,.22);display:flex;flex-direction:column;gap:14px;max-width:calc(100vw - 32px);padding:20px;width:440px}.teemboomModalSm{width:360px}.teemboomModalHeader{align-items:center;color:var(--tb-text);display:flex;font-size:.95em;font-weight:700;justify-content:space-between}.teemboomModalClose{background:none;border:none;border-radius:6px;color:var(--tb-text-muted);cursor:pointer;font-size:1em;line-height:1;padding:2px 6px;transition:background .12s}.teemboomModalClose:hover{background:var(--tb-border)}.teemboomModalBody{color:var(--tb-text-muted);font-size:.88em;line-height:1.5;margin:0}.teemboomModalTextarea{background:var(--tb-surface-strong,#f8fafc);border:1px solid var(--tb-border);border-radius:10px;box-sizing:border-box;color:var(--tb-text);font-family:inherit;font-size:.88em;line-height:1.5;outline:none;padding:10px 12px;resize:vertical;transition:border-color .15s;width:100%}.teemboomModalTextarea:focus{border-color:var(--tb-accent,#4285f4)}.teemboomModalError{color:#e53e3e;font-size:.82em;margin:0}.teemboomModalActions{display:flex;gap:8px;justify-content:flex-end}.teemboomModalCancel{background:none;border:1px solid var(--tb-border);border-radius:10px;color:var(--tb-text-muted);cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:background .12s}.teemboomModalCancel:hover{background:var(--tb-border)}.teemboomModalConfirm{background:var(--tb-accent,#4285f4);border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalConfirm:hover:not(:disabled){opacity:.88}.teemboomModalConfirm:disabled{cursor:not-allowed;opacity:.55}.teemboomModalDanger{background:#e53e3e;border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalDanger:hover:not(:disabled){opacity:.88}.teemboomModalDanger:disabled{cursor:not-allowed;opacity:.55}#teemboomCommentsBox::-webkit-scrollbar{width:8px}#teemboomCommentsBox::-webkit-scrollbar-track{background:transparent}#teemboomCommentsBox::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tb-accent) 28%,#cbd5e1);border-radius:999px}#teemboomCommentsBox::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--tb-accent) 40%,#94a3b8)}@container teemboom-widget (641px <= width <= 1024px){.teemboom_root{font-size:var(--teemboom-tablet-font-size,14px)}}@container teemboom-widget (width <= 600px){.teemboom_root{border-radius:12px;font-size:var(--teemboom-mobile-font-size,13px)}#teemboomWriteComment,.teemboomWriteComment{align-items:flex-start;flex-wrap:wrap;gap:5px;padding:12px 12px 5px}#teemboomCommentInput{border-bottom:1px solid var(--tb-border);flex:1 1 0;min-width:0}.teemboomWriteActions{display:flex;flex-basis:100%;justify-content:flex-end;padding-left:36px}.teemboomComposerInputActions{margin-left:auto}.teemboomRepliesInput{align-items:flex-start;flex-wrap:wrap;gap:4px;padding-bottom:5px}.teemboomReplyInput{border-bottom:1px solid var(--tb-border);flex:1 1 100%;min-width:0}.teemboomReplySend{margin-left:auto}.teemboomComposerOverlay{max-width:calc(100vw - 32px)}.teemboomComposerMenu{flex-wrap:wrap;max-width:min(calc(100vw - 32px),320px)}.teemboomComposerEmojiPicker{max-width:min(calc(100vw - 32px),320px);width:min(calc(100vw - 32px),320px)}.teemboomComment{margin:0 0 10px;overflow:visible;padding:10px;position:relative}.teemboomComment.has-reactions{margin-bottom:32px}.teemboomComment.has-reactions:last-child{margin-bottom:52px}.teemboomComment .teemboomComment{margin:8px 0 0;overflow:visible}.teemboomComment .teemboomComment.has-reactions,.teemboomReplies{margin-bottom:15px}.teemboomReplies{margin-left:0;padding-left:0}.teemboomReplies:before{display:none}.teemboomRepliesInput{border-radius:3px}.teemboom_iframe{height:min(85vh,560px);width:calc(100vw - 20px)}.teemboomCommentMeta .teemboomReactions .teemboomReactionPill{display:none}.teemboomReactionsPillsBar{display:flex}.teemboomCommentMeta .teemboomReactions{background:transparent;border:none;border-radius:0;box-shadow:none;flex-wrap:nowrap;margin-left:auto;overflow-x:visible;padding:0}.teemboomReactionsPillsBar{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;box-shadow:0 2px 10px rgba(2,8,23,.12);flex-wrap:nowrap;justify-content:flex-start;margin-left:0;max-width:calc(100% - 20px);overflow-x:auto;padding:2px 4px;position:absolute;right:0;scrollbar-width:none;top:calc(100% - 13px);z-index:5}.teemboomReactionsPillsBar::-webkit-scrollbar{display:none}.teemboomReactionFullPicker,.teemboomReactionPicker{bottom:auto;left:auto;right:0;top:calc(100% + 8px)}.teemboomReactionFullPicker{max-width:min(90vw,320px)}}@media (prefers-reduced-motion:reduce){.teemboom_root,.teemboom_root *{animation:none!important;transition:none!important}}";
 
 	function generateUUID() {
 	  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
