@@ -5897,6 +5897,18 @@ var clear_land = (function (exports) {
 	    }
 	  }, [colorMode]);
 	  reactExports.useEffect(() => {
+	    const handleColorModeChange = event => {
+	      const nextMode = event?.detail?.mode;
+	      if (nextMode === "light" || nextMode === "dark") {
+	        setActiveMode(nextMode);
+	      }
+	    };
+	    window.addEventListener("teemboom:color-mode-change", handleColorModeChange);
+	    return () => {
+	      window.removeEventListener("teemboom:color-mode-change", handleColorModeChange);
+	    };
+	  }, []);
+	  reactExports.useEffect(() => {
 	    if (!config) {
 	      return;
 	    }
@@ -6490,12 +6502,31 @@ var clear_land = (function (exports) {
 	  return mountWidget(options);
 	}
 
+	/**
+	 * Update widget color mode at runtime.
+	 * @param {"light"|"dark"} mode - Color mode to apply.
+	 */
+	function setColorMode(mode) {
+	  if (mode !== "light" && mode !== "dark") {
+	    throw new Error("TeemboomComments.setColorMode requires mode to be 'light' or 'dark'.");
+	  }
+	  if (typeof window === "undefined") {
+	    return;
+	  }
+	  window.dispatchEvent(new CustomEvent("teemboom:color-mode-change", {
+	    detail: {
+	      mode
+	    }
+	  }));
+	}
+
 	function destroy() {
 	  unmountWidget();
 	}
 
 	const sdk = {
 	  init,
+	  setColorMode,
 	  destroy
 	};
 	if (typeof window !== "undefined") {
@@ -6505,6 +6536,7 @@ var clear_land = (function (exports) {
 	exports.default = sdk;
 	exports.destroy = destroy;
 	exports.init = init;
+	exports.setColorMode = setColorMode;
 
 	Object.defineProperty(exports, '__esModule', { value: true });
 
