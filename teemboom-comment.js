@@ -3330,10 +3330,10 @@ var clear_land = (function (exports) {
 
 
 	/** Default base URL for the Comments REST API */
-	const DEFAULT_API_URL = "http://localhost:5003" ;
+	const DEFAULT_API_URL = "https://comments-api.teemboom.com";
 
 	/** Default WebSocket URL for the live socket server */
-	const DEFAULT_WS_URL = "ws://localhost:5900" ;
+	const DEFAULT_WS_URL = "wss://socket.teemboom.com";
 
 	/**
 	 * Authentication & user-identity utilities
