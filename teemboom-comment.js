@@ -3330,22 +3330,31 @@ var clear_land = (function (exports) {
 
 
 	/** Default base URL for the Comments REST API */
-	const DEFAULT_API_URL = "https://comments-api.teemboom.com";
+	const DEFAULT_API_URL = "http://localhost:5003" ;
 
 	/** Default WebSocket URL for the live socket server */
-	const DEFAULT_WS_URL = "wss://socket.teemboom.com";
+	const DEFAULT_WS_URL = "ws://localhost:5900" ;
 
 	/**
-	 * Resolve a caller-supplied URL override, falling back to the provided default.
-	 * Strips a trailing slash for consistency.
+	 * Authentication & user-identity utilities
+	 *
+	 * Centralises everything related to:
+	 *  - guest user IDs (localStorage UUID)
+	 *  - resolving the display name / identifier from a user object
+	 *  - building acting-user objects for comment actions
+	 *  - iframe auth URL builders
+	 *  - postMessage payload parsing
+	 *  - cookie-based logout
+	 *
+	 * All authentication is cookie-based, driven by a hidden/visible iframe.
+	 * The iframe postMessages user data back to the widget.
 	 */
-	function resolveUrl(override, defaultUrl) {
-	  return (override || defaultUrl).replace(/\/$/, "");
-	}
 
-	/**
-	 * API utilities for communicating with the Teemboom Comments API
-	 */
+	// ─── Storage keys ────────────────────────────────────────────────────────────
+
+	const USER_ID_STORAGE_KEY = "teemboom_user_id";
+
+	// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 	function generateUUID$1() {
 	  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -3357,12 +3366,165 @@ var clear_land = (function (exports) {
 	    return (c === "x" ? r : r & 0x3 | 0x8).toString(16);
 	  });
 	}
-	const USER_ID_STORAGE_KEY = "teemboom_user_id";
-	const USERNAME_STORAGE_KEY = "teemboom_username";
+
+	// ─── User ID (guest / persistent anonymous identity) ─────────────────────────
+
+	/**
+	 * Get or create a stable guest user ID stored in localStorage.
+	 */
+	function getUserId() {
+	  let userId = localStorage.getItem(USER_ID_STORAGE_KEY);
+	  if (!userId) {
+	    userId = generateUUID$1();
+	    localStorage.setItem(USER_ID_STORAGE_KEY, userId);
+	  }
+	  return userId;
+	}
+
+	// ─── User object builders ─────────────────────────────────────────────────────
+
+	/**
+	 * Build a default (anonymous / guest) user object.
+	 */
+	function getDefaultUser() {
+	  return {
+	    _id: getUserId(),
+	    username: "Anonymous",
+	    profile_pic: null
+	  };
+	}
+
+	/**
+	 * Normalize an externally provided user object for `provided_user` auth.
+	 * Ensures a username exists and synthesizes an id when one is missing.
+	 */
+	function normalizeProvidedUser(providedUser) {
+	  if (!providedUser || typeof providedUser !== "object") {
+	    return getDefaultUser();
+	  }
+	  const username = getUsername(providedUser).trim() || "Anonymous";
+	  const userId = getUserIdentifier(providedUser) || getUserId();
+	  return {
+	    ...providedUser,
+	    _id: userId,
+	    id: providedUser?.id || userId,
+	    username,
+	    profile_pic: providedUser?.profile_pic || null
+	  };
+	}
+
+	// ─── User object accessors ────────────────────────────────────────────────────
+
+	/**
+	 * Extract the display name from any user shape returned by the API.
+	 * Falls back to "Anonymous" when no name is present.
+	 */
+	function getUsername(user) {
+	  return user?.username || user?.name || "Anonymous";
+	}
+
+	/**
+	 * Extract a stable identifier (_id / id / user_id) from a user object.
+	 * Returns null when no identifier is found.
+	 */
+	function getUserIdentifier(user) {
+	  return user?._id || user?.id || user?.user_id || null;
+	}
+
+	// ─── Iframe auth URL builders ─────────────────────────────────────────────────
+
+	/**
+	 * URL to silently probe an existing auth cookie on page load.
+	 * @param {string} apiUrl  - Base API URL
+	 * @param {"username"|"signin"} authenticationType
+	 */
+	function getAuthProbeUrl(apiUrl, authenticationType) {
+	  const cookieKey = authenticationType === "username" ? "username_auth" : "signin_auth";
+	  return `${apiUrl}/auth/provide_data?cookie_key=${cookieKey}`;
+	}
+
+	/**
+	 * URL to show the interactive auth page in a visible iframe.
+	 * @param {string} apiUrl
+	 * @param {"username"|"signin"} authenticationType
+	 */
+	function getAuthSignInUrl(apiUrl, authenticationType) {
+	  if (authenticationType === "username") return `${apiUrl}/auth/username`;
+	  if (authenticationType === "signin") return `${apiUrl}/auth/signin`;
+	  return null;
+	}
+
+	/**
+	 * URL to sign out via a hidden iframe request.
+	 * @param {string} apiUrl
+	 */
+	function getAuthSignOutUrl(apiUrl) {
+	  return `${apiUrl}/auth/signout`;
+	}
+
+	// ─── postMessage payload parser ───────────────────────────────────────────────
+
+	/**
+	 * Parse an incoming window.message event from an auth iframe.
+	 *
+	 * Returns one of:
+	 *   { type: "user_data", user: { _id, username, profile_pic } }
+	 *   { type: "logout" }
+	 *   null  (unrecognised / unrelated message)
+	 */
+	function parseAuthMessage(event) {
+	  let getUserIdFn = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : getUserId;
+	  if (event?.data?.type === "user_data") {
+	    const raw = event.data.payload;
+	    if (!raw) return null;
+	    if (typeof raw === "string") {
+	      // This belongs to the 'username' authentication flow
+	      return {
+	        type: "user_data",
+	        user: {
+	          _id: getUserIdFn(),
+	          username: raw,
+	          profile_pic: null
+	        }
+	      };
+	    }
+	    if (raw.username) {
+	      // This belongs to the 'signin' authentication flow
+	      return {
+	        type: "user_data",
+	        user: {
+	          _id: raw._id || getUserIdFn(),
+	          username: raw.username,
+	          profile_pic: raw.profile_pic || null
+	        }
+	      };
+	    }
+	    return null;
+	  }
+	  if (event?.data?.type === "logout") {
+	    return {
+	      type: "logout"
+	    };
+	  }
+	  return null;
+	}
+
+	// ─── Cookie logout ────────────────────────────────────────────────────────────
+
+	/**
+	 * Clear the username_auth cookie client-side (it is not httpOnly).
+	 */
+	function clearUsernameCookie() {
+	  document.cookie = "username_auth=; Max-Age=0; path=/; SameSite=Lax";
+	}
+
+	/**
+	 * API utilities for communicating with the Teemboom Comments API
+	 */
+
 	class CommentAPI {
 	  constructor() {
-	    let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-	    this.apiUrl = resolveUrl(options.apiUrl, DEFAULT_API_URL);
+	    this.apiUrl = DEFAULT_API_URL;
 	  }
 
 	  /**
@@ -3588,55 +3750,6 @@ var clear_land = (function (exports) {
 	      return false;
 	    }
 	  }
-	}
-
-	/**
-	 * Get or create a user ID stored in localStorage
-	 */
-	function getUserId() {
-	  let userId = localStorage.getItem(USER_ID_STORAGE_KEY);
-	  if (!userId) {
-	    userId = generateUUID$1();
-	    localStorage.setItem(USER_ID_STORAGE_KEY, userId);
-	  }
-	  return userId;
-	}
-	function getStoredUsername() {
-	  const username = localStorage.getItem(USERNAME_STORAGE_KEY);
-	  return username ? username.trim() : "";
-	}
-	function setStoredUsername(username) {
-	  const normalizedUsername = typeof username === "string" ? username.trim() : "";
-	  if (!normalizedUsername) {
-	    localStorage.removeItem(USERNAME_STORAGE_KEY);
-	    return "";
-	  }
-	  localStorage.setItem(USERNAME_STORAGE_KEY, normalizedUsername);
-	  return normalizedUsername;
-	}
-	function clearStoredUsername() {
-	  localStorage.removeItem(USERNAME_STORAGE_KEY);
-	}
-
-	/**
-	 * Get default user object for comment posting
-	 */
-	function getDefaultUser() {
-	  let authenticationType = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "guest";
-	  const fallbackUsername = authenticationType === "username" ? getStoredUsername() || "Anonymous" : "Anonymous";
-	  return {
-	    _id: getUserId(),
-	    username: fallbackUsername,
-	    profile_pic: null
-	  };
-	}
-	function getUsernameUser() {
-	  const username = getStoredUsername();
-	  return {
-	    _id: getUserId(),
-	    username: username || "Anonymous",
-	    profile_pic: null
-	  };
 	}
 
 	/**
@@ -4292,13 +4405,16 @@ var clear_land = (function (exports) {
 	}
 
 	const MAX_COMMENT_LENGTH = 5000;
-	const MAX_USERNAME_LENGTH = 40;
+
+	// Returns a stable avatar color from a username.
 	function getProfileAvatarColor(name) {
 	  const defaultHex = ["FFCC66", "99CCCC", "FF6666", "CC99FF", "4285F4", "FF6666", "66CCCC", "FF9966", "5555FF", "66CC99"];
 	  const username = name || "Anonymous";
 	  const colorIndex = username.charCodeAt(0) % defaultHex.length;
 	  return defaultHex[colorIndex];
 	}
+
+	// Renders a circular avatar with the user's initial.
 	function ProfileAvatar(_ref) {
 	  let {
 	    name,
@@ -4324,12 +4440,8 @@ var clear_land = (function (exports) {
 	    children: initial
 	  });
 	}
-	function getUsername(user) {
-	  return user?.username || user?.name || "Anonymous";
-	}
-	function getUserIdentifier(user) {
-	  return user?._id || user?.id || user?.user_id || null;
-	}
+
+	// Sorts comments so pinned items always appear first.
 	function normalizeComments() {
 	  let comments = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : [];
 	  return [...comments].sort((left, right) => {
@@ -4348,6 +4460,8 @@ var clear_land = (function (exports) {
 	  kind: "picker"
 	}];
 	const REACTION_ICON_PATH = "M17.5,12 C20.5375661,12 23,14.4624339 23,17.5 C23,20.5375661 20.5375661,23 17.5,23 C14.4624339,23 12,20.5375661 12,17.5 C12,14.4624339 14.4624339,12 17.5,12 Z M12.0000002,1.99896738 C17.523704,1.99896738 22.0015507,6.47681407 22.0015507,12.0005179 C22.0015507,12.2637452 21.9913819,12.5245975 21.9714157,12.7827034 C21.5335438,12.3671164 21.0376367,12.012094 20.4972374,11.7307716 C20.3551544,7.16057357 16.6051843,3.49896738 12.0000002,3.49896738 C7.30472352,3.49896738 3.49844971,7.30524119 3.49844971,12.0005179 C3.49844971,16.6060394 7.16059249,20.3562216 11.7317296,20.4979161 C12.0124658,21.0381559 12.3673338,21.5337732 12.7825138,21.9716342 C12.5247521,21.9918733 12.2635668,22.0020684 12.0000002,22.0020684 C6.47629639,22.0020684 1.99844971,17.5242217 1.99844971,12.0005179 C1.99844971,6.47681407 6.47629639,1.99896738 12.0000002,1.99896738 Z M17.5,13.9992349 L17.4101244,14.0072906 C17.2060313,14.0443345 17.0450996,14.2052662 17.0080557,14.4093593 L17,14.4992349 L16.9996498,16.9992349 L14.4976498,17 L14.4077742,17.0080557 C14.2036811,17.0450996 14.0427494,17.2060313 14.0057055,17.4101244 L13.9976498,17.5 L14.0057055,17.5898756 C14.0427494,17.7939687 14.2036811,17.9549004 14.4077742,17.9919443 L14.4976498,18 L17.0006498,17.9992349 L17.0011076,20.5034847 L17.0091633,20.5933603 C17.0462073,20.7974534 17.207139,20.9583851 17.411232,20.995429 L17.5011076,21.0034847 L17.5909833,20.995429 C17.7950763,20.9583851 17.956008,20.7974534 17.993052,20.5933603 L18.0011076,20.5034847 L18.0006498,17.9992349 L20.5045655,18 L20.5944411,17.9919443 C20.7985342,17.9549004 20.9594659,17.7939687 20.9965098,17.5898756 L21.0045655,17.5 L20.9965098,17.4101244 C20.9594659,17.2060313 20.7985342,17.0450996 20.5944411,17.0080557 L20.5045655,17 L17.9996498,16.9992349 L18,14.4992349 L17.9919443,14.4093593 C17.9549004,14.2052662 17.7939687,14.0443345 17.5898756,14.0072906 L17.5,13.9992349 Z M8.46174078,14.7838355 C9.12309331,15.6232213 10.0524954,16.1974014 11.0917655,16.4103066 C11.0312056,16.7638158 11,17.1282637 11,17.5 C11,17.6408778 11.0044818,17.7807089 11.0133105,17.9193584 C9.53812034,17.6766509 8.21128537,16.8896809 7.28351576,15.7121597 C7.02716611,15.3868018 7.08310832,14.9152347 7.40846617,14.6588851 C7.73382403,14.4025354 8.20539113,14.4584777 8.46174078,14.7838355 Z M9.00044779,8.75115873 C9.69041108,8.75115873 10.2497368,9.3104845 10.2497368,10.0004478 C10.2497368,10.6904111 9.69041108,11.2497368 9.00044779,11.2497368 C8.3104845,11.2497368 7.75115873,10.6904111 7.75115873,10.0004478 C7.75115873,9.3104845 8.3104845,8.75115873 9.00044779,8.75115873 Z M15.0004478,8.75115873 C15.6904111,8.75115873 16.2497368,9.3104845 16.2497368,10.0004478 C16.2497368,10.6904111 15.6904111,11.2497368 15.0004478,11.2497368 C14.3104845,11.2497368 13.7511587,10.6904111 13.7511587,10.0004478 C13.7511587,9.3104845 14.3104845,8.75115873 15.0004478,8.75115873 Z";
+
+	// Builds a shortened preview string for long comments. If a comment has a lot of words, this shows the 'read more' option.
 	function buildCommentPreview(content) {
 	  let wordLimit = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : COMMENT_PREVIEW_WORD_LIMIT;
 	  const text = typeof content === "string" ? content.trim() : "";
@@ -4369,6 +4483,8 @@ var clear_land = (function (exports) {
 	    hasHiddenText: true
 	  };
 	}
+
+	// Renders and wires up the emoji picker web component.
 	function EmojiPickerElement(_ref2) {
 	  let {
 	    onEmojiSelect
@@ -4379,6 +4495,8 @@ var clear_land = (function (exports) {
 	    if (!element) {
 	      return undefined;
 	    }
+
+	    // Maps picker events to the composer emoji callback.
 	    const handleEmojiClick = event => {
 	      const emoji = event?.detail?.unicode;
 	      if (emoji) {
@@ -4405,6 +4523,8 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
+
+	// Inserts text into a textarea at the current caret position.
 	function insertTextAtCursor(_ref3) {
 	  let {
 	    textarea,
@@ -4439,6 +4559,8 @@ var clear_land = (function (exports) {
 	    }
 	  });
 	}
+
+	// Renders composer actions like emoji insertion.
 	function ComposerActions(_ref4) {
 	  let {
 	    textareaRef,
@@ -4453,6 +4575,8 @@ var clear_land = (function (exports) {
 	    if (!isMenuOpen) {
 	      return undefined;
 	    }
+
+	    // Closes the actions menu when clicking outside.
 	    const handleOutsidePointer = event => {
 	      const root = actionsRootRef.current;
 	      const eventPath = typeof event.composedPath === "function" ? event.composedPath() : [];
@@ -4462,6 +4586,8 @@ var clear_land = (function (exports) {
 	        setIsEmojiPickerOpen(false);
 	      }
 	    };
+
+	    // Closes open composer menus on Escape.
 	    const handleEscape = event => {
 	      if (event.key === "Escape") {
 	        setIsMenuOpen(false);
@@ -4578,6 +4704,8 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
+
+	// Shows profile actions and auth entry points.
 	function ProfileMenu(_ref5) {
 	  let {
 	    user,
@@ -4587,6 +4715,7 @@ var clear_land = (function (exports) {
 	    onClose
 	  } = _ref5;
 	  const signedIn = authenticationType === "guest" ? true : Boolean(getUserIdentifier(user) && getUsername(user) !== "Anonymous");
+	  const canPromptForAuth = authenticationType === "username" || authenticationType === "signin";
 	  const heading = signedIn ? getUsername(user) : authenticationType === "username" ? "Set a username" : authenticationType === "guest" ? "Anonymous" : "Not Signed in";
 	  const actionLabel = authenticationType === "username" ? "Set username" : "Sign in";
 	  return /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
@@ -4619,7 +4748,7 @@ var clear_land = (function (exports) {
 	        type: "button",
 	        onClick: onLogout,
 	        children: "Log Out"
-	      }) : authenticationType !== "guest" ? /*#__PURE__*/jsxRuntimeExports.jsx("button", {
+	      }) : canPromptForAuth ? /*#__PURE__*/jsxRuntimeExports.jsx("button", {
 	        type: "button",
 	        onClick: onSignIn,
 	        children: actionLabel
@@ -4627,6 +4756,8 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
+
+	// Hosts the auth iframe with optional hidden mode.
 	function AuthFrame(_ref6) {
 	  let {
 	    url,
@@ -4647,62 +4778,14 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function UsernamePopup(_ref7) {
-	  let {
-	    value,
-	    onChange,
-	    onSave,
-	    onClose
-	  } = _ref7;
-	  return /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
-	    className: "teemboom_popup_main",
-	    children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
-	      className: "teemboom_popup_partition",
-	      onClick: onClose
-	    }), /*#__PURE__*/jsxRuntimeExports.jsxs("div", {
-	      className: "teemboom_popup",
-	      children: [/*#__PURE__*/jsxRuntimeExports.jsx("div", {
-	        className: "teemboom_popup_close",
-	        onClick: onClose,
-	        children: "x"
-	      }), /*#__PURE__*/jsxRuntimeExports.jsx("h6", {
-	        style: {
-	          margin: "0 0 10px 0",
-	          fontSize: "14px"
-	        },
-	        children: "Choose a username"
-	      }), /*#__PURE__*/jsxRuntimeExports.jsx("input", {
-	        type: "text",
-	        value: value,
-	        maxLength: MAX_USERNAME_LENGTH,
-	        placeholder: "Enter username",
-	        onChange: event => onChange(event.target.value),
-	        onKeyDown: event => {
-	          if (event.key === "Enter") {
-	            event.preventDefault();
-	            onSave();
-	          }
-	        },
-	        style: {
-	          width: "100%",
-	          marginBottom: "12px",
-	          boxSizing: "border-box"
-	        },
-	        autoFocus: true
-	      }), /*#__PURE__*/jsxRuntimeExports.jsx("button", {
-	        type: "button",
-	        onClick: onSave,
-	        children: "Save username"
-	      })]
-	    })]
-	  });
-	}
-	function EditCommentPopup(_ref9) {
+
+	// Modal for editing an existing comment.
+	function EditCommentPopup(_ref7) {
 	  let {
 	    comment,
 	    onSave,
 	    onClose
-	  } = _ref9;
+	  } = _ref7;
 	  const [value, setValue] = reactExports.useState(comment?.content || "");
 	  const [saving, setSaving] = reactExports.useState(false);
 	  const [error, setError] = reactExports.useState("");
@@ -4713,6 +4796,8 @@ var clear_land = (function (exports) {
 	      textareaRef.current.selectionStart = textareaRef.current.value.length;
 	    }
 	  }, []);
+
+	  // Persists edited comment text.
 	  const handleSave = async () => {
 	    const trimmed = value.trim();
 	    if (!trimmed) {
@@ -4780,13 +4865,17 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
-	function DeleteCommentPopup(_ref0) {
+
+	// Modal for confirming comment deletion.
+	function DeleteCommentPopup(_ref8) {
 	  let {
 	    onConfirm,
 	    onClose
-	  } = _ref0;
+	  } = _ref8;
 	  const [deleting, setDeleting] = reactExports.useState(false);
 	  const [error, setError] = reactExports.useState("");
+
+	  // Confirms and submits the delete action.
 	  const handleDelete = async () => {
 	    setDeleting(true);
 	    setError("");
@@ -4838,15 +4927,19 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
-	function ReportCommentPopup(_ref1) {
+
+	// Modal for reporting a comment with an optional reason.
+	function ReportCommentPopup(_ref9) {
 	  let {
 	    onConfirm,
 	    onClose
-	  } = _ref1;
+	  } = _ref9;
 	  const [reason, setReason] = reactExports.useState("");
 	  const [submitting, setSubmitting] = reactExports.useState(false);
 	  const [done, setDone] = reactExports.useState(false);
 	  const [error, setError] = reactExports.useState("");
+
+	  // Submits the report request.
 	  const handleSubmit = async () => {
 	    setSubmitting(true);
 	    setError("");
@@ -4920,19 +5013,22 @@ var clear_land = (function (exports) {
 	    })
 	  });
 	}
-	function CommentActionsMenu(_ref10) {
+
+	// Dropdown menu for comment-level actions.
+	function CommentActionsMenu(_ref0) {
 	  let {
 	    comment,
 	    userId,
 	    onEdit,
 	    onDelete,
 	    onReport
-	  } = _ref10;
+	  } = _ref0;
 	  const [open, setOpen] = reactExports.useState(false);
 	  const menuRef = reactExports.useRef(null);
 	  const isOwner = userId && comment?.user_id && userId === comment.user_id;
 	  reactExports.useEffect(() => {
 	    if (!open) return;
+	    // Closes the menu when focus moves outside it.
 	    const handleClickOutside = e => {
 	      const path = e.composedPath ? e.composedPath() : [];
 	      if (menuRef.current && !path.includes(menuRef.current)) {
@@ -5047,7 +5143,9 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function CommentItem(_ref11) {
+
+	// Renders a single comment row, including replies and popups.
+	function CommentItem(_ref1) {
 	  let {
 	    comment,
 	    replies,
@@ -5064,7 +5162,7 @@ var clear_land = (function (exports) {
 	    onEdit,
 	    onDelete,
 	    resizeTextarea
-	  } = _ref11;
+	  } = _ref1;
 	  const [showReplies, setShowReplies] = reactExports.useState(false);
 	  const [loadingReplies, setLoadingReplies] = reactExports.useState(false);
 	  const [replyInput, setReplyInput] = reactExports.useState("");
@@ -5088,6 +5186,8 @@ var clear_land = (function (exports) {
 	  reactExports.useEffect(() => {
 	    setIsExpanded(false);
 	  }, [comment?._id, commentContent]);
+
+	  // Expands or collapses replies, loading them on first open.
 	  const handleToggleReplies = async () => {
 	    if (!showReplies && !repliesLoaded) {
 	      setLoadingReplies(true);
@@ -5098,6 +5198,8 @@ var clear_land = (function (exports) {
 	    }
 	    setShowReplies(prev => !prev);
 	  };
+
+	  // Applies a reaction and updates local counts.
 	  const handleReactionClick = async reaction => {
 	    if (!onReact) return;
 	    const previousReaction = myReaction;
@@ -5137,6 +5239,8 @@ var clear_land = (function (exports) {
 	      return nextCounts;
 	    });
 	  };
+
+	  // Submits a reply for the current comment.
 	  const handleReplySend = async () => {
 	    const content = replyInput.trim();
 	    if (!content || sendingReply || !onReplySubmit) return;
@@ -5397,12 +5501,14 @@ var clear_land = (function (exports) {
 	    })]
 	  });
 	}
-	function Widget(_ref12) {
+
+	// Main widget component that manages state, auth, and comment actions.
+	function Widget(_ref10) {
 	  let {
 	    pageId = "unknown",
-	    apiUrl,
-	    colorMode
-	  } = _ref12;
+	    colorMode,
+	    providedUser
+	  } = _ref10;
 	  const [commentsById, setCommentsById] = reactExports.useState({});
 	  const commentsByIdRef = reactExports.useRef({});
 	  const [topLevelIds, setTopLevelIds] = reactExports.useState([]);
@@ -5417,7 +5523,6 @@ var clear_land = (function (exports) {
 	  const [authIframeUrl, setAuthIframeUrl] = reactExports.useState(null);
 	  const [authIframeHidden, setAuthIframeHidden] = reactExports.useState(false);
 	  const [profileOpen, setProfileOpen] = reactExports.useState(false);
-	  const [usernamePopupOpen, setUsernamePopupOpen] = reactExports.useState(false);
 	  const [usernameDraft, setUsernameDraft] = reactExports.useState("");
 	  const commentInputRef = reactExports.useRef(null);
 	  const webSocketRef = reactExports.useRef(null);
@@ -5456,15 +5561,15 @@ var clear_land = (function (exports) {
 	      };
 	    });
 	  }, [updateCommentsById]);
-	  const authenticationType = config?.authentication_type || config?.identification || "guest";
+	  const authenticationType = config?.authentication_type || "guest";
+	  // Treat guests as authenticated for interaction gating; for other modes,
+	  // require a non-anonymous identity before allowing protected actions.
 	  const hasAuthenticatedIdentity = authenticationType === "guest" || Boolean(getUserIdentifier(user)) && getUsername(user) !== "Anonymous";
-	  const resolvedApiUrl = reactExports.useMemo(() => resolveUrl(apiUrl, DEFAULT_API_URL), [apiUrl]);
+	  const resolvedApiUrl = DEFAULT_API_URL;
 
 	  // Initialize API and fetch config
 	  reactExports.useEffect(() => {
-	    const apiInstance = new CommentAPI({
-	      apiUrl
-	    });
+	    const apiInstance = new CommentAPI();
 	    setApi(apiInstance);
 	    window.teemboomApi = apiInstance;
 	    const fetchConfig = async () => {
@@ -5472,7 +5577,7 @@ var clear_land = (function (exports) {
 	      setConfig(cfg);
 	    };
 	    fetchConfig();
-	  }, [pageId, apiUrl]);
+	  }, [pageId]);
 
 	  // Initialize WebSocket connection if live chat is enabled
 	  reactExports.useEffect(() => {
@@ -5702,67 +5807,60 @@ var clear_land = (function (exports) {
 	      webSocket.off("delete_message", handleDeleteMessage);
 	    };
 	  }, [webSocket]);
+
+	  // Listen for auth iframe responses and update the in-memory identity state.
 	  reactExports.useEffect(() => {
 	    const onMessage = event => {
-	      if (event?.data?.type === "user_data") {
-	        const raw = event.data.payload;
-	        if (raw) {
-	          // Payload may be a plain string (cookie value) or a full user object
-	          if (typeof raw === "string") {
-	            setUser({
-	              _id: getUserId(),
-	              username: raw,
-	              profile_pic: null
-	            });
-	          } else if (raw.username) {
-	            setUser({
-	              _id: raw._id || getUserId(),
-	              username: raw.username,
-	              profile_pic: raw.profile_pic || null
-	            });
-	          }
-	        }
+	      const parsed = parseAuthMessage(event);
+	      if (!parsed) return;
+	      if (parsed.type === "user_data") {
+	        setUser(parsed.user);
+	      } else if (parsed.type === "logout") {
+	        setUser(getDefaultUser());
 	      }
-	      if (event?.data?.type === "logout") {
-	        if (authenticationType === "username") {
-	          setUser(getUsernameUser());
-	        } else {
-	          setUser(getDefaultUser(authenticationType));
-	        }
-	      }
-	      if (event?.data?.type === "user_data" || event?.data?.type === "logout") {
-	        setAuthIframeUrl(null);
-	        setProfileOpen(false);
-	      }
+	      setAuthIframeUrl(null);
+	      setProfileOpen(false);
 	    };
 	    window.addEventListener("message", onMessage);
 	    return () => window.removeEventListener("message", onMessage);
 	  }, [authenticationType]);
 	  reactExports.useEffect(() => {
+	    if (authenticationType !== "provided_user") {
+	      return;
+	    }
+	    setUser(normalizeProvidedUser(providedUser));
+	  }, [authenticationType, providedUser]);
+
+	  // Set up auth iframe based on the configured authentication type.
+	  // This runs once after config is fetched. The iframe will either:
+	  //   - For "username": silently probe the username_auth cookie via postMessage
+	  //   - For "signin": silently probe the signin_auth cookie via postMessage
+	  //   - For "guest": no iframe needed, all users are anonymous
+	  //   - For "provided_user": use the identity passed in through widget options
+	  // The iframe's postMessage response (handled in the onMessage useEffect above)
+	  // will populate the user state with real identity data from the server.
+	  reactExports.useEffect(() => {
 	    if (authenticationType === "username") {
 	      // Probe username cookie on page load
 	      setAuthIframeHidden(true);
-	      setAuthIframeUrl(`${resolvedApiUrl}/auth/provide_data?cookie_key=username_auth`);
-	      const storedUsername = getStoredUsername();
-	      setUsernameDraft(storedUsername);
-	      setUser(getUsernameUser());
+	      setAuthIframeUrl(getAuthProbeUrl(resolvedApiUrl, "username"));
 	      return;
 	    }
 	    if (authenticationType === "signin") {
 	      // Probe signin session on page load
 	      setAuthIframeHidden(true);
-	      setAuthIframeUrl(`${resolvedApiUrl}/auth/provide_data?cookie_key=signin_auth`);
-	      setUser(currentUser => {
-	        if (getUserIdentifier(currentUser) && getUsername(currentUser) !== "Anonymous") {
-	          return currentUser;
-	        }
-	        return getDefaultUser("signin");
-	      });
+	      setAuthIframeUrl(getAuthProbeUrl(resolvedApiUrl, "signin"));
+	      return;
+	    }
+	    if (authenticationType === "provided_user") {
+	      setAuthIframeUrl(null);
+	      setAuthIframeHidden(false);
+	      setUser(normalizeProvidedUser(providedUser));
 	      return;
 	    }
 	    setAuthIframeUrl(null);
-	    setUser(getDefaultUser("guest"));
-	  }, [authenticationType, resolvedApiUrl]);
+	    setUser(getDefaultUser());
+	  }, [authenticationType, providedUser, resolvedApiUrl]);
 
 	  // Get default user and load comments
 	  reactExports.useEffect(() => {
@@ -5792,16 +5890,6 @@ var clear_land = (function (exports) {
 	    loadComments();
 	  }, [api, pageId, config?.filter_by, user]);
 
-	  // Default to light mode.
-	  reactExports.useEffect(() => {
-	    if (colorMode === "light" || colorMode === "dark") return;
-	    if (typeof window === "undefined" || !window.matchMedia) return;
-	    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-	    const handler = e => setActiveMode(e.matches ? "dark" : "light");
-	    mq.addEventListener("change", handler);
-	    return () => mq.removeEventListener("change", handler);
-	  }, [colorMode]);
-
 	  // Sync activeMode when the colorMode prop changes from outside.
 	  reactExports.useEffect(() => {
 	    if (colorMode === "light" || colorMode === "dark") {
@@ -5822,8 +5910,8 @@ var clear_land = (function (exports) {
 	    const allColors = config.colors || {};
 	    const palette = allColors[activeMode] || allColors["light"] || allColors;
 	    const font = config.font || {};
-	    Object.entries(palette).forEach(_ref13 => {
-	      let [key, value] = _ref13;
+	    Object.entries(palette).forEach(_ref11 => {
+	      let [key, value] = _ref11;
 	      root.style.setProperty(`--teemboom-${key}`, String(value));
 	    });
 
@@ -5842,48 +5930,36 @@ var clear_land = (function (exports) {
 	      root.style.setProperty("--teemboom-pc-font-size", `${font.pc_font_size}px`);
 	    }
 	  }, [config, activeMode]);
+
+	  // Open the correct auth entry screen for the current auth mode.
 	  const requestSignIn = () => {
-	    if (authenticationType === "username") {
-	      // Open the username auth page in a visible iframe
+	    const url = getAuthSignInUrl(resolvedApiUrl, authenticationType);
+	    if (url) {
 	      setAuthIframeHidden(false);
-	      setAuthIframeUrl(`${resolvedApiUrl}/auth/username`);
-	      return;
-	    }
-	    if (authenticationType === "signin") {
-	      setAuthIframeHidden(false);
-	      setAuthIframeUrl(`${resolvedApiUrl}/auth/signin`);
+	      setAuthIframeUrl(url);
 	    }
 	  };
+
+	  // Sign out by auth mode: clear username cookie locally, or call server signout.
 	  const requestLogout = () => {
 	    if (authenticationType === "username") {
-	      // Clear the cookie from the browser directly (it's httponly=false)
-	      document.cookie = "username_auth=; Max-Age=0; path=/; SameSite=Lax";
-	      clearStoredUsername();
-	      setUsernameDraft("");
-	      setUser({
-	        _id: getUserId(),
-	        username: "Anonymous",
-	        profile_pic: null
-	      });
+	      clearUsernameCookie();
+	      setUser(getDefaultUser());
 	      setProfileOpen(false);
 	      return;
 	    }
 	    if (authenticationType === "signin") {
 	      setAuthIframeHidden(true);
-	      setAuthIframeUrl(`${resolvedApiUrl}/auth/signout`);
+	      setAuthIframeUrl(getAuthSignOutUrl(resolvedApiUrl));
+	    }
+	    if (authenticationType === "provided_user") {
+	      setUser(normalizeProvidedUser(providedUser));
+	      setProfileOpen(false);
 	    }
 	  };
-	  const saveUsername = () => {
-	    const normalizedUsername = setStoredUsername(usernameDraft);
-	    setUser({
-	      _id: user?._id || getDefaultUser("username")._id,
-	      username: normalizedUsername || "Anonymous",
-	      profile_pic: null
-	    });
-	    setUsernameDraft(normalizedUsername);
-	    setUsernamePopupOpen(false);
-	    setProfileOpen(false);
-	  };
+
+	  // Central guard used by create/react/report/edit/delete actions.
+	  // If identity is required and missing, prompt auth and block the action.
 	  const ensureCanAct = () => {
 	    if (authenticationType === "username") {
 	      if (getUsername(user) === "Anonymous") {
@@ -5893,6 +5969,9 @@ var clear_land = (function (exports) {
 	      return true;
 	    }
 	    if (authenticationType !== "signin") {
+	      if (authenticationType === "provided_user") {
+	        return hasAuthenticatedIdentity;
+	      }
 	      return true;
 	    }
 	    if (hasAuthenticatedIdentity) {
@@ -5901,16 +5980,18 @@ var clear_land = (function (exports) {
 	    requestSignIn();
 	    return false;
 	  };
+
+	  // Build the user payload expected by API endpoints for the current auth mode.
 	  const resolveActingUser = () => {
 	    if (authenticationType === "username") {
 	      return {
 	        _id: getUserIdentifier(user) || getUserId(),
-	        username: getUsername(user) !== "Anonymous" ? getUsername(user) : getStoredUsername() || "Anonymous",
+	        username: getUsername(user) !== "Anonymous" ? getUsername(user) : "Anonymous",
 	        profile_pic: user?.profile_pic || null
 	      };
 	    }
 	    if (authenticationType === "guest") {
-	      return getDefaultUser("guest");
+	      return getDefaultUser();
 	    }
 	    if (hasAuthenticatedIdentity) {
 	      const userId = getUserIdentifier(user);
@@ -5999,6 +6080,8 @@ var clear_land = (function (exports) {
 	    textareaElement.style.height = `${nextHeight}px`;
 	    textareaElement.style.overflowY = textareaElement.scrollHeight > 100 ? "auto" : "hidden";
 	  }, []);
+
+	  // Submit a top-level comment or reply after validation and auth checks.
 	  const handleSend = async function (textarea) {
 	    let parentId = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : null;
 	    if (!textarea?.value?.trim() || !api) {
@@ -6048,6 +6131,8 @@ var clear_land = (function (exports) {
 	      }
 	    }
 	  };
+
+	  // Apply a reaction and keep local state in sync, then optionally broadcast live updates.
 	  const handleReact = async (commentId, reaction) => {
 	    if (!api) return null;
 	    if (!ensureCanAct()) return null;
@@ -6109,6 +6194,8 @@ var clear_land = (function (exports) {
 	    }
 	    return response;
 	  };
+
+	  // Submit a reply, patch local maps, and update the parent's reply count.
 	  const handleReplySubmit = async (parentId, content) => {
 	    if (!content || !api) return null;
 	    if (content.length > MAX_COMMENT_LENGTH) {
@@ -6147,6 +6234,8 @@ var clear_land = (function (exports) {
 	    }));
 	    return reply;
 	  };
+
+	  // Report a comment with an optional reason.
 	  const handleReport = reactExports.useCallback(async (commentId, reason) => {
 	    if (!api || !ensureCanAct()) return false;
 	    const actingUser = resolveActingUser();
@@ -6157,6 +6246,8 @@ var clear_land = (function (exports) {
 	    } : null;
 	    return api.reportComment(commentId, actingUserId, content);
 	  }, [api, user, config]);
+
+	  // Edit comment content and patch UI state on success.
 	  const handleEdit = reactExports.useCallback(async (comment, newContent) => {
 	    if (!api) return false;
 	    const actingUser = resolveActingUser();
@@ -6168,6 +6259,8 @@ var clear_land = (function (exports) {
 	    });
 	    return ok;
 	  }, [api, user, patchComment]);
+
+	  // Delete a comment and remove it from local structures (top-level or nested).
 	  const handleDelete = reactExports.useCallback(async comment => {
 	    if (!api) return false;
 	    const actingUser = resolveActingUser();
@@ -6175,26 +6268,33 @@ var clear_land = (function (exports) {
 	    if (!actingUserId) return false;
 	    const ok = await api.deleteComment(comment._id, actingUserId);
 	    if (!ok) return false;
-	    // Remove from flat map
-	    updateCommentsById(prev => {
-	      const next = {
-	        ...prev
-	      };
-	      delete next[comment._id];
-	      return next;
-	    });
-	    if (comment.parent_id) {
-	      setReplyIdsByParent(prev => ({
-	        ...prev,
-	        [comment.parent_id]: (prev[comment.parent_id] || []).filter(id => id !== comment._id)
-	      }));
-	      patchComment(comment.parent_id, c => ({
-	        ...c,
-	        replies: Math.max(0, Number(c.replies || 0) - 1)
-	      }));
-	    } else {
-	      setTopLevelIds(prev => prev.filter(id => id !== comment._id));
+	    if (config.dontDisplayDeletedComments) {
+	      // Remove from flat map
+	      updateCommentsById(prev => {
+	        const next = {
+	          ...prev
+	        };
+	        delete next[comment._id];
+	        return next;
+	      });
+	      if (comment.parent_id) {
+	        setReplyIdsByParent(prev => ({
+	          ...prev,
+	          [comment.parent_id]: (prev[comment.parent_id] || []).filter(id => id !== comment._id)
+	        }));
+	        patchComment(comment.parent_id, c => ({
+	          ...c,
+	          replies: Math.max(0, Number(c.replies || 0) - 1)
+	        }));
+	      } else {
+	        setTopLevelIds(prev => prev.filter(id => id !== comment._id));
+	      }
 	    }
+	    // Mark as deleted in place so the deleted-comment UI is shown
+	    patchComment(comment._id, c => ({
+	      ...c,
+	      deleted: true
+	    }));
 	    return true;
 	  }, [api, user, updateCommentsById, patchComment]);
 	  if (!config) {
@@ -6283,11 +6383,6 @@ var clear_land = (function (exports) {
 	        onSignIn: requestSignIn,
 	        onLogout: requestLogout,
 	        onClose: () => setProfileOpen(false)
-	      }), usernamePopupOpen && /*#__PURE__*/jsxRuntimeExports.jsx(UsernamePopup, {
-	        value: usernameDraft,
-	        onChange: setUsernameDraft,
-	        onSave: saveUsername,
-	        onClose: () => setUsernamePopupOpen(false)
 	      }), authIframeUrl && /*#__PURE__*/jsxRuntimeExports.jsx(AuthFrame, {
 	        url: authIframeUrl,
 	        hidden: authIframeHidden,
@@ -6297,7 +6392,7 @@ var clear_land = (function (exports) {
 	  });
 	}
 
-	var css_248z = ":host{all:initial}.teemboom_container{container-name:teemboom-widget;container-type:inline-size;display:block;width:100%}.teemboom_root,.teemboom_root *{box-sizing:border-box;font-family:var(--teemboom-font-family,\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif)}.teemboom_root{--tb-accent:var(--teemboom-primary,#4f46e5);--tb-accent-soft:color-mix(in srgb,var(--tb-accent) 14%,#fff);--tb-bg:var(--teemboom-main,#fff);--tb-surface:color-mix(in srgb,var(--tb-bg) 96%,#f6f8fb);--tb-surface-strong:color-mix(in srgb,var(--tb-bg) 90%,#eef2ff);--tb-border:color-mix(in srgb,var(--teemboom-border,#cbd5e1) 50%,transparent);--tb-border-strong:color-mix(in srgb,var(--teemboom-border,#94a3b8) 40%,transparent);--tb-text:var(--teemboom-text,#0f172a);--tb-text-muted:var(--teemboom-text_muted,#64748b);--tb-comment-bg:var(--teemboom-comment_bg,#fff);--tb-input-bg:var(--teemboom-input_bg,#fff);--tb-picker-bg:var(--teemboom-picker_bg,#fff);--tb-popup-bg:var(--teemboom-popup_bg,#fff);--tb-comment-text:var(--teemboom-comment_text,#1e293b);--tb-placeholder:var(--teemboom-placeholder,#6b7280);--tb-send-btn-bg:var(--teemboom-send_button_bg,#2563eb);--tb-send-btn-hover:var(--teemboom-send_button_hover_bg,#1d4ed8);--tb-send-btn-text:var(--teemboom-send_button_text,#fff);--tb-cancel-text:var(--teemboom-cancel_text,#374151);--tb-cancel-hover-bg:var(--teemboom-cancel_hover_bg,#f3f4f6);--tb-pinned-text:var(--teemboom-pinned_text,#b45309);--tb-pinned-bg:var(--teemboom-pinned_bg,#fffbeb);--tb-pinned-border:var(--teemboom-pinned_border,#fde68a);border-radius:16px;color:var(--tb-text);display:flex;flex-direction:column;font-size:var(--teemboom-pc-font-size,15px);line-height:1.45;position:relative;width:100%}#teemboomWriteComment,.teemboomWriteComment{align-items:center;background:var(--tb-input-bg);border-bottom:1px solid var(--tb-border);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;margin:14px 0;padding:10px 12px}.teemboomMainProfilePic{cursor:pointer;flex-shrink:0;transition:transform .2s ease}.teemboomMainProfilePic:hover{transform:translateY(-1px)}#teemboomCommentInput{align-self:center;background:transparent;border:none;border-radius:0;flex:1;font-family:inherit;line-height:1.35;margin:0;max-height:100px;min-height:28px;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}#teemboomCommentInput,.teemboomUsernameInput{color:var(--tb-text);font-size:.8em;outline:none}.teemboomUsernameInput{background:var(--tb-input-bg);border:1px solid var(--tb-border);border-radius:10px;min-width:0;padding:8px 10px;transition:border-color .15s ease,box-shadow .15s ease;width:140px}.teemboomUsernameInput:focus{border-color:color-mix(in srgb,var(--tb-accent) 45%,#cbd5e1);box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-accent) 12%,transparent)}.teemboomUsernameInput::placeholder{color:var(--tb-placeholder)}#teemboomCommentInput:focus{border:none;box-shadow:none}#teemboomCommentInput::placeholder,.teemboomReplyInput::placeholder{color:var(--tb-placeholder)}.teemboomComposerInputActions,.teemboomWriteActions{align-items:center;display:flex;gap:6px;margin-left:auto}.teemboomComposerActions{align-items:center;display:inline-flex;flex-shrink:0;position:relative}.teemboomComposerOverlay{align-items:flex-end;bottom:100%;display:flex;flex-direction:column;gap:8px;position:absolute;right:0;z-index:180}.teemboomComposerMenu{align-items:center;background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 14px 34px rgba(2,8,23,.16);display:flex;gap:6px;justify-content:flex-end;white-space:nowrap;width:300px}.teemboomComposerMenuButton,.teemboomComposerPlusButton{background:var(--tb-comment-bg);border:none;color:var(--tb-text);cursor:pointer;transition:border-color .18s ease,background-color .18s ease,transform .12s ease}.teemboomComposerMenuButton:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 40%,#cbd5e1)}.teemboomComposerMenuButton.active{background:color-mix(in srgb,var(--tb-accent) 12%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomComposerMenuButton{border-radius:999px;font-size:.72em;font-weight:700;line-height:1;padding:3px 5px}.teemboomComposerEmojiButton{align-items:center;display:inline-flex;height:26px;justify-content:center;width:38px}.teemboomComposerEmojiButton svg{height:18px;width:20px}.teemboomComposerPlusButton{align-items:center;display:inline-flex;height:26px;justify-content:center;padding:0;width:26px}.teemboomEmojiPickerWrapper{all:revert;font-size:16px;line-height:1}.teemboomComposerEmojiPicker{background:var(--tb-picker-bg);border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-height:min(56vh,360px);max-width:min(90vw,320px);overflow:hidden;position:absolute;top:0;width:min(90vw,320px)}.teemboomComposerEmojiPicker em-emoji-picker,.teemboomComposerEmojiPicker emoji-picker,.teemboomEmojiPickerWrapper em-emoji-picker,.teemboomEmojiPickerWrapper emoji-picker{--border-radius:16px;--emoji-size:20px;--num-columns:8;--category-icon-size:18px;--category-emoji-size:20px;--font-family:inherit;--font-size:13px;--shadow:none;background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:16px;color:var(--tb-text);display:block;font-size:16px;height:min(56vh,360px);line-height:1;width:100%}.teemboomWriteActionCancel,.teemboomWriteActionSubmit{background:transparent;border:0;border-radius:2px;cursor:pointer;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomWriteActionCancel{color:var(--tb-cancel-text)}.teemboomWriteActionCancel:hover{background:var(--tb-cancel-hover-bg)}.teemboomWriteActionSubmit{background:var(--tb-send-btn-bg);color:var(--tb-send-btn-text)}.teemboomWriteActionSubmit:hover{background:var(--tb-send-btn-hover)}#teemboomCommentsBox,.teemboomCommentsBox{background:transparent;flex:1;padding:10px 0}.teemboomComment{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:14px;display:flex;flex-direction:column;gap:9px;margin:0 0 10px;padding:12px;position:relative;transition:border-color .2s ease,box-shadow .2s ease}.teemboomComment:hover{box-shadow:0 6px 16px rgba(2,8,23,.05)}.teemboomComment:hover .teemboomCommentActionsBtn{display:flex}.teemboomComment:last-child{margin-bottom:12px}.teemboomDeletedLayout{align-items:flex-start;display:flex;gap:10px}.teemboomDeletedIcon{align-items:center;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:50%;color:#7c7c84;display:flex;flex-shrink:0;height:40px;justify-content:center;width:40px}.teemboomDeletedContent{display:flex;flex:1;flex-direction:column;gap:8px;min-width:0}.teemboomComment.deleted .teemboomCommentEngage,.teemboomComment.deleted .teemboomcommentText{padding-left:0}.teemboomComment.deleted .teemboomReplies{margin-left:0}.teemboomCommentActions{position:absolute;right:0;top:-9px;z-index:10}.teemboomCommentActionsBtn{align-items:center;background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:6px;box-shadow:0 1px 4px rgba(2,8,23,.08);color:var(--tb-text-muted);cursor:pointer;display:flex;display:none;height:20px;justify-content:center;padding:0;transition:background .15s,color .15s;width:24px}.teemboomCommentActionsBtn:hover{background:var(--tb-border);color:var(--tb-text)}.teemboomCommentActionsDropdown{background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:10px;box-shadow:0 8px 24px rgba(2,8,23,.1);display:flex;flex-direction:column;min-width:148px;overflow:hidden;position:absolute;right:0;top:calc(100% + 4px);z-index:100}.teemboomCommentActionsDropdown button{align-items:center;background:none;border:none;color:var(--tb-text);cursor:pointer;display:flex;font-size:.85em;gap:8px;padding:9px 14px;text-align:left;transition:background .12s}.teemboomCommentActionsDropdown button:hover{background:var(--tb-border)}.teemboomCommentActionsDropdown button.teemboomActionsReport{color:#e53e3e}.teemboomPinned{background:var(--tb-pinned-bg);border:1px solid var(--tb-pinned-border);border-radius:999px;color:var(--tb-pinned-text);font-size:.8em;font-weight:600;margin-bottom:2px;padding:3px 10px;width:fit-content}.teemboomCommentMeta{align-items:flex-start;display:flex;gap:10px}.teemboomcommentProfilePic{flex-shrink:0}.teemboomCommentTitle{display:flex;flex:1;flex-direction:column;gap:3px}.teemboomCommentTitle p{color:var(--tb-text);font-size:.87em;font-weight:700;margin:0}.teemboomCommentTitle span{color:var(--tb-text-muted);font-size:.8em}.teemboomReactions{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto;position:relative}.teemboomReactionPickerButton,.teemboomReactionPickerItem,.teemboomReactionPill{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;cursor:pointer;transition:border-color .2s ease,background-color .2s ease,transform .12s ease}.teemboomReactionPill{align-items:center;display:inline-flex;gap:6px;min-height:30px;padding:4px 8px}.teemboomReactionPickerButton:hover,.teemboomReactionPickerItem:hover,.teemboomReactionPill:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 35%,#cbd5e1)}.teemboomReactionPickerItem.active,.teemboomReactionPill.active{background:color-mix(in srgb,var(--tb-accent) 15%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionEmoji{font-size:1em;line-height:1}.teemboomReactionCount{color:var(--tb-text-muted);font-size:.8em;font-weight:700;line-height:1}.teemboomReactionPill.active .teemboomReactionCount{color:color-mix(in srgb,var(--tb-accent) 75%,#0f172a)}.teemboomReactionPickerButton{align-items:center;display:inline-flex;font-size:.87em;gap:3px;justify-content:center;min-height:30px;min-width:36px;padding:4px 8px}.teemboomReactionPickerButton.open{background:color-mix(in srgb,var(--tb-accent) 10%,#fff);border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionPickerPlus{color:var(--tb-text-muted);font-size:.73em;font-weight:700}.teemboomReactionPicker{background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:12px;box-shadow:0 14px 34px rgba(2,8,23,.18);display:grid;gap:6px;grid-template-columns:repeat(5,minmax(0,1fr));min-width:220px;padding:8px;position:absolute;right:0;top:calc(100% + 8px);z-index:20}.teemboomReactionPickerItem{align-items:center;border-radius:10px;display:inline-flex;font-size:1.2em;height:32px;justify-content:center;width:36px}.teemboomReactionPickerMoreButton{color:var(--tb-text-muted);font-size:1.2em;font-weight:700}.teemboomReactionFullPicker{background:var(--tb-picker-bg);border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-width:min(90vw,360px);overflow:hidden;position:absolute;right:0;top:calc(100% + 8px);z-index:25}.teemboomEmojiPickerWrapper em-emoji-picker,.teemboomEmojiPickerWrapper emoji-picker,.teemboomReactionFullPicker em-emoji-picker,.teemboomReactionFullPicker emoji-picker{--border-radius:16px;--emoji-size:20px;--num-columns:8;--category-icon-size:18px;--category-emoji-size:20px;--font-family:inherit;--font-size:13px;--shadow:none;background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:16px;color:var(--tb-text);display:block;font-size:16px;height:400px;line-height:1;max-width:min(90vw,360px);width:100%}.teemboomReactionPickerButton:disabled,.teemboomReactionPickerItem:disabled,.teemboomReactionPill:disabled{cursor:not-allowed;opacity:.5;transform:none}.teemboomReactionsPillsBar{display:none}.teemboomcommentText{color:var(--tb-comment-text);font-size:1em;line-height:1.6;overflow-wrap:anywhere;padding:0 0 0 50px;white-space:pre-wrap;word-break:break-word}.teemboomcommentText.collapsed{max-height:180px;overflow:hidden}.teemboomReadMoreToggle{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;margin-left:50px;padding:0}.teemboomReadMoreToggle:hover{text-decoration:underline}.teemboomCommentEngage{display:flex;gap:12px;margin-top:4px;padding:0 0 0 50px}.teemboomReplyButton{align-items:center;color:var(--tb-text-muted);cursor:pointer;display:flex;font-size:.8em;gap:5px;transition:color .2s ease}.teemboomReplyButton:hover{color:var(--tb-accent)}.teemboomReplyButton p{font-size:1em;font-weight:600;margin:0}.teemboomReplyButton svg{height:14px;width:14px}.teemboomReplyNumber{font-size:1em;font-weight:600;margin-left:2px}.teemboomReplies{border-top:1px dashed var(--tb-border);display:flex;flex-direction:column;gap:8px;margin-left:50px;margin-top:10px;padding:12px 0 0;position:relative}.teemboomRepliesInput{align-items:center;background:var(--tb-input-bg);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;padding:2px 12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomRepliesInput:focus-within{border-color:color-mix(in srgb,var(--tb-accent) 48%,#94a3b8)}.teemboomReplyInput{align-self:center;background:transparent;border:none;border-radius:0;color:var(--tb-text);flex:1;font-family:inherit;font-size:.8em;height:30px;line-height:1.35;margin:0;max-height:100px;min-height:15px;outline:none;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}.teemboomReplyInput:focus{border:none;box-shadow:none}.teemboomReplySend{align-self:center;background:var(--tb-send-btn-bg);border:0;border-radius:2px;color:var(--tb-send-btn-text);cursor:pointer;flex-shrink:0;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomReplySend:hover{background:var(--tb-send-btn-hover)}.teemboomReplySend:disabled{cursor:not-allowed;opacity:.5}.teemboomComment .teemboomComment{margin:8px 0 0}.teemboomLoadMoreReplies{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;padding:0}.teemboomLoading,.teemboomNoComments,.teemboomNoReplies{color:var(--tb-text-muted);font-size:.87em;margin:0;padding:20px;text-align:center}.teemboom_profile_avatar{align-items:center;border-radius:50%;box-shadow:inset 0 0 0 1px hsla(0,0%,100%,.2),0 4px 12px rgba(0,0,0,.18);color:#fff;display:inline-flex;font-weight:700;justify-content:center;user-select:none}.teemboom_popup_main{inset:0;position:absolute;z-index:200}.teemboom_popup_partition{background:transparent;inset:0;position:absolute}.teemboom_popup{background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 18px 40px rgba(2,8,23,.18);left:10px;padding:14px;position:absolute;top:64px;width:240px;z-index:210}.teemboom_popup_close{color:var(--tb-text-muted);cursor:pointer;font-size:1.07em;line-height:1;margin-bottom:8px;text-align:right}.teemboom_popup button{background:var(--tb-surface-strong);border:1px solid color-mix(in srgb,var(--tb-accent) 30%,#cbd5e1);border-radius:10px;color:#111827;cursor:pointer;font-weight:600;padding:8px 12px}.teemboom_iframe_cover{backdrop-filter:blur(2px);background:rgba(15,23,42,.22);inset:0;position:fixed;z-index:998}.teemboom_iframe{background:var(--tb-popup-bg);border:none;border-radius:14px;box-shadow:0 24px 60px rgba(2,8,23,.35);height:500px;left:50%;max-height:90vh;max-width:90vw;position:fixed;top:50%;transform:translate(-50%,-50%);width:400px;z-index:999}.teemboomActionsDelete{color:#e53e3e}.teemboomModalOverlay{align-items:center;backdrop-filter:blur(2px);background:rgba(15,23,42,.35);display:flex;inset:0;justify-content:center;position:fixed;z-index:1000}.teemboomModal{background:var(--tb-popup-bg,#fff);border:1px solid var(--tb-border);border-radius:16px;box-shadow:0 24px 60px rgba(2,8,23,.22);display:flex;flex-direction:column;gap:14px;max-width:calc(100vw - 32px);padding:20px;width:440px}.teemboomModalSm{width:360px}.teemboomModalHeader{align-items:center;color:var(--tb-text);display:flex;font-size:.95em;font-weight:700;justify-content:space-between}.teemboomModalClose{background:none;border:none;border-radius:6px;color:var(--tb-text-muted);cursor:pointer;font-size:1em;line-height:1;padding:2px 6px;transition:background .12s}.teemboomModalClose:hover{background:var(--tb-border)}.teemboomModalBody{color:var(--tb-text-muted);font-size:.88em;line-height:1.5;margin:0}.teemboomModalTextarea{background:var(--tb-surface-strong,#f8fafc);border:1px solid var(--tb-border);border-radius:10px;box-sizing:border-box;color:var(--tb-text);font-family:inherit;font-size:.88em;line-height:1.5;outline:none;padding:10px 12px;resize:vertical;transition:border-color .15s;width:100%}.teemboomModalTextarea:focus{border-color:var(--tb-accent,#4285f4)}.teemboomModalError{color:#e53e3e;font-size:.82em;margin:0}.teemboomModalActions{display:flex;gap:8px;justify-content:flex-end}.teemboomModalCancel{background:none;border:1px solid var(--tb-border);border-radius:10px;color:var(--tb-text-muted);cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:background .12s}.teemboomModalCancel:hover{background:var(--tb-border)}.teemboomModalConfirm{background:var(--tb-accent,#4285f4);border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalConfirm:hover:not(:disabled){opacity:.88}.teemboomModalConfirm:disabled{cursor:not-allowed;opacity:.55}.teemboomModalDanger{background:#e53e3e;border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalDanger:hover:not(:disabled){opacity:.88}.teemboomModalDanger:disabled{cursor:not-allowed;opacity:.55}#teemboomCommentsBox::-webkit-scrollbar{width:8px}#teemboomCommentsBox::-webkit-scrollbar-track{background:transparent}#teemboomCommentsBox::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tb-accent) 28%,#cbd5e1);border-radius:999px}#teemboomCommentsBox::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--tb-accent) 40%,#94a3b8)}@container teemboom-widget (641px <= width <= 1024px){.teemboom_root{font-size:var(--teemboom-tablet-font-size,14px)}}@container teemboom-widget (width <= 600px){.teemboom_root{border-radius:12px;font-size:var(--teemboom-mobile-font-size,13px)}#teemboomWriteComment,.teemboomWriteComment{align-items:flex-start;flex-wrap:wrap;gap:5px;padding:12px 12px 5px}#teemboomCommentInput{border-bottom:1px solid var(--tb-border);flex:1 1 0;min-width:0}.teemboomWriteActions{display:flex;flex-basis:100%;justify-content:flex-end;padding-left:36px}.teemboomComposerInputActions{margin-left:auto}.teemboomRepliesInput{align-items:flex-start;flex-wrap:wrap;gap:4px;padding-bottom:5px}.teemboomReplyInput{border-bottom:1px solid var(--tb-border);flex:1 1 100%;min-width:0}.teemboomReplySend{margin-left:auto}.teemboomComposerOverlay{max-width:calc(100vw - 32px)}.teemboomComposerMenu{flex-wrap:wrap;max-width:min(calc(100vw - 32px),320px)}.teemboomComposerEmojiPicker{max-width:min(calc(100vw - 32px),320px);width:min(calc(100vw - 32px),320px)}.teemboomComment{margin:0 0 10px;overflow:visible;padding:10px;position:relative}.teemboomComment.has-reactions{margin-bottom:32px}.teemboomComment.has-reactions:last-child{margin-bottom:52px}.teemboomComment .teemboomComment{margin:8px 0 0;overflow:visible}.teemboomComment .teemboomComment.has-reactions,.teemboomReplies{margin-bottom:15px}.teemboomReplies{margin-left:0;padding-left:0}.teemboomReplies:before{display:none}.teemboomRepliesInput{border-radius:3px}.teemboom_iframe{height:min(85vh,560px);width:calc(100vw - 20px)}.teemboomCommentMeta .teemboomReactions .teemboomReactionPill{display:none}.teemboomReactionsPillsBar{display:flex}.teemboomCommentMeta .teemboomReactions{background:transparent;border:none;border-radius:0;box-shadow:none;flex-wrap:nowrap;margin-left:auto;overflow-x:visible;padding:0}.teemboomReactionsPillsBar{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;box-shadow:0 2px 10px rgba(2,8,23,.12);flex-wrap:nowrap;justify-content:flex-start;margin-left:0;max-width:calc(100% - 20px);overflow-x:auto;padding:2px 4px;position:absolute;right:0;scrollbar-width:none;top:calc(100% - 13px);z-index:5}.teemboomReactionsPillsBar::-webkit-scrollbar{display:none}.teemboomReactionFullPicker,.teemboomReactionPicker{bottom:auto;left:auto;right:0;top:calc(100% + 8px)}.teemboomReactionFullPicker{max-width:min(90vw,320px)}}@media (prefers-reduced-motion:reduce){.teemboom_root,.teemboom_root *{animation:none!important;transition:none!important}}";
+	var css_248z = ":host{all:initial}.teemboom_container{container-name:teemboom-widget;container-type:inline-size;display:block;width:100%}.teemboom_root,.teemboom_root *{box-sizing:border-box;font-family:var(--teemboom-font-family,\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif)}.teemboom_root{--tb-accent:var(--teemboom-primary,#4f46e5);--tb-accent-soft:color-mix(in srgb,var(--tb-accent) 14%,#fff);--tb-bg:var(--teemboom-main,#fff);--tb-surface:color-mix(in srgb,var(--tb-bg) 96%,#f6f8fb);--tb-surface-strong:color-mix(in srgb,var(--tb-bg) 90%,#eef2ff);--tb-border:color-mix(in srgb,var(--teemboom-border,#cbd5e1) 50%,transparent);--tb-border-strong:color-mix(in srgb,var(--teemboom-border,#94a3b8) 40%,transparent);--tb-text:var(--teemboom-text,#0f172a);--tb-text-muted:var(--teemboom-text_muted,#64748b);--tb-comment-bg:var(--teemboom-comment_bg,#fff);--tb-input-bg:var(--teemboom-input_bg,#fff);--tb-picker-bg:var(--teemboom-picker_bg,#fff);--tb-popup-bg:var(--teemboom-popup_bg,#fff);--tb-comment-text:var(--teemboom-comment_text,#1e293b);--tb-placeholder:var(--teemboom-placeholder,#6b7280);--tb-send-btn-bg:var(--teemboom-send_button_bg,#2563eb);--tb-send-btn-hover:var(--teemboom-send_button_hover_bg,#1d4ed8);--tb-send-btn-text:var(--teemboom-send_button_text,#fff);--tb-cancel-text:var(--teemboom-cancel_text,#374151);--tb-cancel-hover-bg:var(--teemboom-cancel_hover_bg,#f3f4f6);--tb-pinned-text:var(--teemboom-pinned_text,#b45309);--tb-pinned-bg:var(--teemboom-pinned_bg,#fffbeb);--tb-pinned-border:var(--teemboom-pinned_border,#fde68a);border-radius:16px;color:var(--tb-text);display:flex;flex-direction:column;font-size:var(--teemboom-pc-font-size,15px);line-height:1.45;position:relative;width:100%}#teemboomWriteComment,.teemboomWriteComment{align-items:center;background:var(--tb-input-bg);border-bottom:1px solid var(--tb-border);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;margin-bottom:14px;padding:10px 12px}.teemboomMainProfilePic{cursor:pointer;flex-shrink:0;transition:transform .2s ease}.teemboomMainProfilePic:hover{transform:translateY(-1px)}#teemboomCommentInput{align-self:center;background:transparent;border:none;border-radius:0;flex:1;font-family:inherit;line-height:1.35;margin:0;max-height:100px;min-height:28px;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}#teemboomCommentInput,.teemboomUsernameInput{color:var(--tb-text);font-size:.8em;outline:none}.teemboomUsernameInput{background:var(--tb-input-bg);border:1px solid var(--tb-border);border-radius:10px;min-width:0;padding:8px 10px;transition:border-color .15s ease,box-shadow .15s ease;width:140px}.teemboomUsernameInput:focus{border-color:color-mix(in srgb,var(--tb-accent) 45%,#cbd5e1);box-shadow:0 0 0 3px color-mix(in srgb,var(--tb-accent) 12%,transparent)}.teemboomUsernameInput::placeholder{color:var(--tb-placeholder)}#teemboomCommentInput:focus{border:none;box-shadow:none}#teemboomCommentInput::placeholder,.teemboomReplyInput::placeholder{color:var(--tb-placeholder)}.teemboomComposerInputActions,.teemboomWriteActions{align-items:center;display:flex;gap:6px;margin-left:auto}.teemboomComposerActions{align-items:center;display:inline-flex;flex-shrink:0;position:relative}.teemboomComposerOverlay{align-items:flex-end;bottom:100%;display:flex;flex-direction:column;gap:8px;position:absolute;right:0;z-index:180}.teemboomComposerMenu{align-items:center;background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 14px 34px rgba(2,8,23,.16);display:flex;gap:6px;justify-content:flex-end;white-space:nowrap;width:300px}.teemboomComposerMenuButton,.teemboomComposerPlusButton{background:var(--tb-comment-bg);border:none;color:var(--tb-text);cursor:pointer;transition:border-color .18s ease,background-color .18s ease,transform .12s ease}.teemboomComposerMenuButton:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 40%,#cbd5e1)}.teemboomComposerMenuButton.active{background:color-mix(in srgb,var(--tb-accent) 12%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomComposerMenuButton{border-radius:999px;font-size:.72em;font-weight:700;line-height:1;padding:3px 5px}.teemboomComposerEmojiButton{align-items:center;display:inline-flex;height:26px;justify-content:center;width:38px}.teemboomComposerEmojiButton svg{height:18px;width:20px}.teemboomComposerPlusButton{align-items:center;display:inline-flex;height:26px;justify-content:center;padding:0;width:26px}.teemboomEmojiPickerWrapper{all:revert;font-size:16px;line-height:1}.teemboomComposerEmojiPicker{background:var(--tb-picker-bg);border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-height:min(56vh,360px);max-width:min(90vw,320px);overflow:hidden;position:absolute;top:0;width:min(90vw,320px)}.teemboomComposerEmojiPicker em-emoji-picker,.teemboomComposerEmojiPicker emoji-picker,.teemboomEmojiPickerWrapper em-emoji-picker,.teemboomEmojiPickerWrapper emoji-picker{--border-radius:16px;--emoji-size:20px;--num-columns:8;--category-icon-size:18px;--category-emoji-size:20px;--font-family:inherit;--font-size:13px;--shadow:none;background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:16px;color:var(--tb-text);display:block;font-size:16px;height:min(56vh,360px);line-height:1;width:100%}.teemboomWriteActionCancel,.teemboomWriteActionSubmit{background:transparent;border:0;border-radius:2px;cursor:pointer;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomWriteActionCancel{color:var(--tb-cancel-text)}.teemboomWriteActionCancel:hover{background:var(--tb-cancel-hover-bg)}.teemboomWriteActionSubmit{background:var(--tb-send-btn-bg);color:var(--tb-send-btn-text)}.teemboomWriteActionSubmit:hover{background:var(--tb-send-btn-hover)}#teemboomCommentsBox,.teemboomCommentsBox{background:transparent;flex:1;padding:10px 0}.teemboomComment{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:14px;display:flex;flex-direction:column;gap:9px;margin:0 0 10px;padding:12px;position:relative;transition:border-color .2s ease,box-shadow .2s ease}.teemboomComment:hover{box-shadow:0 6px 16px rgba(2,8,23,.05)}.teemboomComment:hover .teemboomCommentActionsBtn{display:flex}.teemboomComment:last-child{margin-bottom:12px}.teemboomDeletedLayout{align-items:flex-start;display:flex;gap:10px}.teemboomDeletedIcon{align-items:center;background:#f4f4f5;border:1px solid #d4d4d8;border-radius:50%;color:#7c7c84;display:flex;flex-shrink:0;height:40px;justify-content:center;width:40px}.teemboomDeletedContent{display:flex;flex:1;flex-direction:column;gap:8px;min-width:0}.teemboomComment.deleted .teemboomCommentEngage,.teemboomComment.deleted .teemboomcommentText{padding-left:0}.teemboomComment.deleted .teemboomComment .teemboomcommentText{padding-left:50px}.teemboomComment.deleted .teemboomReplies{margin-left:0}.teemboomCommentActions{position:absolute;right:0;top:-9px;z-index:10}.teemboomCommentActionsBtn{align-items:center;background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:6px;box-shadow:0 1px 4px rgba(2,8,23,.08);color:var(--tb-text-muted);cursor:pointer;display:flex;display:none;height:20px;justify-content:center;padding:0;transition:background .15s,color .15s;width:24px}.teemboomCommentActionsBtn:hover{background:var(--tb-border);color:var(--tb-text)}.teemboomCommentActionsDropdown{background:var(--tb-comment-bg,#fff);border:1px solid var(--tb-border);border-radius:10px;box-shadow:0 8px 24px rgba(2,8,23,.1);display:flex;flex-direction:column;min-width:148px;overflow:hidden;position:absolute;right:0;top:calc(100% + 4px);z-index:100}.teemboomCommentActionsDropdown button{align-items:center;background:none;border:none;color:var(--tb-text);cursor:pointer;display:flex;font-size:.85em;gap:8px;padding:9px 14px;text-align:left;transition:background .12s}.teemboomCommentActionsDropdown button:hover{background:var(--tb-border)}.teemboomCommentActionsDropdown button.teemboomActionsReport{color:#e53e3e}.teemboomPinned{background:var(--tb-pinned-bg);border:1px solid var(--tb-pinned-border);border-radius:999px;color:var(--tb-pinned-text);font-size:.8em;font-weight:600;margin-bottom:2px;padding:3px 10px;width:fit-content}.teemboomCommentMeta{align-items:flex-start;display:flex;gap:10px}.teemboomcommentProfilePic{flex-shrink:0}.teemboomCommentTitle{display:flex;flex:1;flex-direction:column;gap:3px}.teemboomCommentTitle p{color:var(--tb-text);font-size:.87em;font-weight:700;margin:0}.teemboomCommentTitle span{color:var(--tb-text-muted);font-size:.8em}.teemboomReactions{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-left:auto;position:relative}.teemboomReactionPickerButton,.teemboomReactionPickerItem,.teemboomReactionPill{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;cursor:pointer;transition:border-color .2s ease,background-color .2s ease,transform .12s ease}.teemboomReactionPill{align-items:center;display:inline-flex;gap:6px;min-height:30px;padding:4px 8px}.teemboomReactionPickerButton:hover,.teemboomReactionPickerItem:hover,.teemboomReactionPill:hover{background:var(--tb-surface-strong);border-color:color-mix(in srgb,var(--tb-accent) 35%,#cbd5e1)}.teemboomReactionPickerItem.active,.teemboomReactionPill.active{background:color-mix(in srgb,var(--tb-accent) 15%,var(--tb-comment-bg));border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionEmoji{font-size:1em;line-height:1}.teemboomReactionCount{color:var(--tb-text-muted);font-size:.8em;font-weight:700;line-height:1}.teemboomReactionPill.active .teemboomReactionCount{color:color-mix(in srgb,var(--tb-accent) 75%,#0f172a)}.teemboomReactionPickerButton{align-items:center;display:inline-flex;font-size:.87em;gap:3px;justify-content:center;min-height:30px;min-width:36px;padding:4px 8px}.teemboomReactionPickerButton.open{background:color-mix(in srgb,var(--tb-accent) 10%,#fff);border-color:color-mix(in srgb,var(--tb-accent) 55%,#cbd5e1)}.teemboomReactionPickerPlus{color:var(--tb-text-muted);font-size:.73em;font-weight:700}.teemboomReactionPicker{background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:12px;box-shadow:0 14px 34px rgba(2,8,23,.18);display:grid;gap:6px;grid-template-columns:repeat(5,minmax(0,1fr));min-width:220px;padding:8px;position:absolute;right:0;top:calc(100% + 8px);z-index:20}.teemboomReactionPickerItem{align-items:center;border-radius:10px;display:inline-flex;font-size:1.2em;height:32px;justify-content:center;width:36px}.teemboomReactionPickerMoreButton{color:var(--tb-text-muted);font-size:1.2em;font-weight:700}.teemboomReactionFullPicker{background:var(--tb-picker-bg);border-radius:16px;box-shadow:0 16px 48px rgba(2,8,23,.22),0 2px 8px rgba(2,8,23,.08);max-width:min(90vw,360px);overflow:hidden;position:absolute;right:0;top:calc(100% + 8px);z-index:25}.teemboomEmojiPickerWrapper em-emoji-picker,.teemboomEmojiPickerWrapper emoji-picker,.teemboomReactionFullPicker em-emoji-picker,.teemboomReactionFullPicker emoji-picker{--border-radius:16px;--emoji-size:20px;--num-columns:8;--category-icon-size:18px;--category-emoji-size:20px;--font-family:inherit;--font-size:13px;--shadow:none;background:var(--tb-picker-bg);border:1px solid var(--tb-border);border-radius:16px;color:var(--tb-text);display:block;font-size:16px;height:400px;line-height:1;max-width:min(90vw,360px);width:100%}.teemboomReactionPickerButton:disabled,.teemboomReactionPickerItem:disabled,.teemboomReactionPill:disabled{cursor:not-allowed;opacity:.5;transform:none}.teemboomReactionsPillsBar{display:none}.teemboomcommentText{color:var(--tb-comment-text);font-size:1em;line-height:1.6;overflow-wrap:anywhere;padding:0 0 0 50px;white-space:pre-wrap;word-break:break-word}.teemboomcommentText.collapsed{max-height:180px;overflow:hidden}.teemboomReadMoreToggle{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;margin-left:50px;padding:0}.teemboomReadMoreToggle:hover{text-decoration:underline}.teemboomCommentEngage{display:flex;gap:12px;margin-top:4px;padding:0 0 0 50px}.teemboomReplyButton{align-items:center;color:var(--tb-text-muted);cursor:pointer;display:flex;font-size:.8em;gap:5px;transition:color .2s ease}.teemboomReplyButton:hover{color:var(--tb-accent)}.teemboomReplyButton p{font-size:1em;font-weight:600;margin:0}.teemboomReplyButton svg{height:14px;width:14px}.teemboomReplyNumber{font-size:1em;font-weight:600;margin-left:2px}.teemboomReplies{border-top:1px dashed var(--tb-border);display:flex;flex-direction:column;gap:8px;margin-left:50px;margin-top:10px;padding:12px 0 0;position:relative}.teemboomRepliesInput{align-items:center;background:var(--tb-input-bg);border:1px solid color-mix(in srgb,var(--tb-border) 88%,#d1d5db);border-radius:3px;box-shadow:0 2px 10px rgba(15,23,42,.12);display:flex;gap:10px;padding:2px 12px;transition:border-color .2s ease,box-shadow .2s ease}.teemboomRepliesInput:focus-within{border-color:color-mix(in srgb,var(--tb-accent) 48%,#94a3b8)}.teemboomReplyInput{align-self:center;background:transparent;border:none;border-radius:0;color:var(--tb-text);flex:1;font-family:inherit;font-size:.8em;height:30px;line-height:1.35;margin:0;max-height:100px;min-height:15px;outline:none;overflow-y:hidden;padding:6px 0;resize:none;transition:color .2s ease,height .08s ease}.teemboomReplyInput:focus{border:none;box-shadow:none}.teemboomReplySend{align-self:center;background:var(--tb-send-btn-bg);border:0;border-radius:2px;color:var(--tb-send-btn-text);cursor:pointer;flex-shrink:0;font-size:.67em;font-weight:700;letter-spacing:.02em;padding:6px 8px;text-transform:uppercase;transition:background-color .15s ease,color .15s ease}.teemboomReplySend:hover{background:var(--tb-send-btn-hover)}.teemboomReplySend:disabled{cursor:not-allowed;opacity:.5}.teemboomComment .teemboomComment{margin:8px 0 0}.teemboomLoadMoreReplies{align-self:flex-start;background:transparent;border:none;color:var(--tb-accent);cursor:pointer;font-size:.8em;font-weight:600;padding:0}.teemboomLoading,.teemboomNoComments,.teemboomNoReplies{color:var(--tb-text-muted);font-size:.87em;margin:0;padding:20px;text-align:center}.teemboom_profile_avatar{align-items:center;border-radius:50%;box-shadow:inset 0 0 0 1px hsla(0,0%,100%,.2),0 4px 12px rgba(0,0,0,.18);color:#fff;display:inline-flex;font-weight:700;justify-content:center;user-select:none}.teemboom_popup_main{inset:0;position:absolute;z-index:200}.teemboom_popup_partition{background:transparent;inset:0;position:absolute}.teemboom_popup{background:var(--tb-popup-bg);border:1px solid var(--tb-border);border-radius:14px;box-shadow:0 18px 40px rgba(2,8,23,.18);left:10px;padding:14px;position:absolute;top:64px;width:240px;z-index:210}.teemboom_popup_close{color:var(--tb-text-muted);cursor:pointer;font-size:1.07em;line-height:1;margin-bottom:8px;text-align:right}.teemboom_popup button{background:var(--tb-surface-strong);border:1px solid color-mix(in srgb,var(--tb-accent) 30%,#cbd5e1);border-radius:10px;color:#111827;cursor:pointer;font-weight:600;padding:8px 12px}.teemboom_iframe_cover{backdrop-filter:blur(2px);background:rgba(15,23,42,.22);inset:0;position:fixed;z-index:998}.teemboom_iframe{background:var(--tb-popup-bg);border:none;border-radius:14px;box-shadow:0 24px 60px rgba(2,8,23,.35);height:500px;left:50%;max-height:90vh;max-width:90vw;position:fixed;top:50%;transform:translate(-50%,-50%);width:400px;z-index:999}.teemboomActionsDelete{color:#e53e3e}.teemboomModalOverlay{align-items:center;backdrop-filter:blur(2px);background:rgba(15,23,42,.35);display:flex;inset:0;justify-content:center;position:fixed;z-index:1000}.teemboomModal{background:var(--tb-popup-bg,#fff);border:1px solid var(--tb-border);border-radius:16px;box-shadow:0 24px 60px rgba(2,8,23,.22);display:flex;flex-direction:column;gap:14px;max-width:calc(100vw - 32px);padding:20px;width:440px}.teemboomModalSm{width:360px}.teemboomModalHeader{align-items:center;color:var(--tb-text);display:flex;font-size:.95em;font-weight:700;justify-content:space-between}.teemboomModalClose{background:none;border:none;border-radius:6px;color:var(--tb-text-muted);cursor:pointer;font-size:1em;line-height:1;padding:2px 6px;transition:background .12s}.teemboomModalClose:hover{background:var(--tb-border)}.teemboomModalBody{color:var(--tb-text-muted);font-size:.88em;line-height:1.5;margin:0}.teemboomModalTextarea{background:var(--tb-surface-strong,#f8fafc);border:1px solid var(--tb-border);border-radius:10px;box-sizing:border-box;color:var(--tb-text);font-family:inherit;font-size:.88em;line-height:1.5;outline:none;padding:10px 12px;resize:vertical;transition:border-color .15s;width:100%}.teemboomModalTextarea:focus{border-color:var(--tb-accent,#4285f4)}.teemboomModalError{color:#e53e3e;font-size:.82em;margin:0}.teemboomModalActions{display:flex;gap:8px;justify-content:flex-end}.teemboomModalCancel{background:none;border:1px solid var(--tb-border);border-radius:10px;color:var(--tb-text-muted);cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:background .12s}.teemboomModalCancel:hover{background:var(--tb-border)}.teemboomModalConfirm{background:var(--tb-accent,#4285f4);border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalConfirm:hover:not(:disabled){opacity:.88}.teemboomModalConfirm:disabled{cursor:not-allowed;opacity:.55}.teemboomModalDanger{background:#e53e3e;border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:.85em;font-weight:600;padding:7px 16px;transition:opacity .12s}.teemboomModalDanger:hover:not(:disabled){opacity:.88}.teemboomModalDanger:disabled{cursor:not-allowed;opacity:.55}#teemboomCommentsBox::-webkit-scrollbar{width:8px}#teemboomCommentsBox::-webkit-scrollbar-track{background:transparent}#teemboomCommentsBox::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--tb-accent) 28%,#cbd5e1);border-radius:999px}#teemboomCommentsBox::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--tb-accent) 40%,#94a3b8)}@container teemboom-widget (641px <= width <= 1024px){.teemboom_root{font-size:var(--teemboom-tablet-font-size,14px)}}@container teemboom-widget (width <= 600px){.teemboom_root{border-radius:12px;font-size:var(--teemboom-mobile-font-size,13px)}#teemboomWriteComment,.teemboomWriteComment{align-items:flex-start;flex-wrap:wrap;gap:5px;padding:12px 12px 5px}#teemboomCommentInput{border-bottom:1px solid var(--tb-border);flex:1 1 0;min-width:0}.teemboomWriteActions{display:flex;flex-basis:100%;justify-content:flex-end;padding-left:36px}.teemboomComposerInputActions{margin-left:auto}.teemboomRepliesInput{align-items:flex-start;flex-wrap:wrap;gap:4px;padding-bottom:5px}.teemboomReplyInput{border-bottom:1px solid var(--tb-border);flex:1 1 100%;min-width:0}.teemboomReplySend{margin-left:auto}.teemboomComposerOverlay{max-width:calc(100vw - 32px)}.teemboomComposerMenu{flex-wrap:wrap;max-width:min(calc(100vw - 32px),320px)}.teemboomComposerEmojiPicker{max-width:min(calc(100vw - 32px),320px);width:min(calc(100vw - 32px),320px)}.teemboomComment{margin:0 0 10px;overflow:visible;padding:10px;position:relative}.teemboomComment.has-reactions{margin-bottom:32px}.teemboomComment.has-reactions:last-child{margin-bottom:52px}.teemboomComment .teemboomComment{margin:8px 0 0;overflow:visible}.teemboomComment .teemboomComment.has-reactions,.teemboomReplies{margin-bottom:15px}.teemboomReplies{margin-left:0;padding-left:0}.teemboomReplies:before{display:none}.teemboomRepliesInput{border-radius:3px}.teemboom_iframe{height:min(85vh,560px);width:calc(100vw - 20px)}.teemboomCommentMeta .teemboomReactions .teemboomReactionPill{display:none}.teemboomReactionsPillsBar{display:flex}.teemboomCommentMeta .teemboomReactions{background:transparent;border:none;border-radius:0;box-shadow:none;flex-wrap:nowrap;margin-left:auto;overflow-x:visible;padding:0}.teemboomReactionsPillsBar{background:var(--tb-comment-bg);border:1px solid var(--tb-border);border-radius:999px;box-shadow:0 2px 10px rgba(2,8,23,.12);flex-wrap:nowrap;justify-content:flex-start;margin-left:0;max-width:calc(100% - 20px);overflow-x:auto;padding:2px 4px;position:absolute;right:0;scrollbar-width:none;top:calc(100% - 13px);z-index:5}.teemboomReactionsPillsBar::-webkit-scrollbar{display:none}.teemboomReactionFullPicker,.teemboomReactionPicker{bottom:auto;left:auto;right:0;top:calc(100% + 8px)}.teemboomReactionFullPicker{max-width:min(90vw,320px)}}@media (prefers-reduced-motion:reduce){.teemboom_root,.teemboom_root *{animation:none!important;transition:none!important}}";
 
 	function generateUUID() {
 	  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -6343,9 +6438,9 @@ var clear_land = (function (exports) {
 	}
 	function mountWidget() {
 	  let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-	  const target = document.querySelector(options.selector);
+	  const target = document.getElementById(options.containerID);
 	  if (!target) {
-	    throw new Error(`TeemWidget: selector not found: ${options.selector}`);
+	    throw new Error(`TeemWidget: container not found: ${options.containerID}`);
 	  }
 	  const host = document.createElement("div");
 	  host.setAttribute("data-teem-widget-host", "true");
@@ -6361,8 +6456,9 @@ var clear_land = (function (exports) {
 	  const root = clientExports.createRoot(appRoot);
 	  root.render(/*#__PURE__*/React.createElement(Widget, {
 	    pageId: pageId,
-	    apiUrl: options.api_url,
-	    colorMode: options.color_mode // "light" | "dark" | undefined (default to light)
+	    colorMode: options.color_mode,
+	    // "light" | "dark" | undefined (default to light)
+	    providedUser: options.user
 	  }));
 	  widgetInstance = {
 	    root,
@@ -6377,15 +6473,16 @@ var clear_land = (function (exports) {
 	/**
 	 * Initialize and mount the Teemboom widget
 	 * @param {Object} options - Configuration options
-	 * @param {string} options.selector - Required: CSS selector for element to mount widget into
+	 * @param {string} options.containerID - Required: DOM id of the element to mount the widget into
 	 * @param {string} [options.page_id] - Optional: Unique page identifier. If not provided, auto-generated from URL
 	 * @param {"light"|"dark"} [options.color_mode] - Optional: Force a color mode. Omit to auto-detect from system preference (prefers-color-scheme).
+	 * @param {{username?: string, name?: string, id?: string, _id?: string, user_id?: string, profile_pic?: string|null}} [options.user] - Optional: External user identity for `provided_user` authentication.
 	 * @returns {Object} Widget instance
 	 */
 	function init() {
 	  let options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-	  if (!options.selector || typeof options.selector !== "string") {
-	    throw new Error("TeemboomComments.init requires a valid selector string.");
+	  if (!options.containerID || typeof options.containerID !== "string") {
+	    throw new Error("TeemboomComments.init requires a valid containerID string.");
 	  }
 	  if (getWidgetInstance()) {
 	    unmountWidget();
