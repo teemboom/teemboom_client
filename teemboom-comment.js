@@ -5527,7 +5527,7 @@ var clear_land = (function (exports) {
 	        resizeTextarea: resizeTextarea
 	      }, reply._id)) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	        className: "teemboomNoReplies",
-	        children: "No replies yet"
+	        children: config?.text_snippets?.no_replies_yet || "No replies yet"
 	      }), hasMoreReplies && /*#__PURE__*/jsxRuntimeExports.jsx("button", {
 	        type: "button",
 	        className: "teemboomLoadMoreReplies",
@@ -6461,7 +6461,7 @@ var clear_land = (function (exports) {
 	          }, commentId);
 	        }) : /*#__PURE__*/jsxRuntimeExports.jsx("p", {
 	          className: "teemboomNoComments",
-	          children: "No comments yet"
+	          children: textSnippets.no_comments_yet || "No comments yet"
 	        })
 	      }), profileOpen && /*#__PURE__*/jsxRuntimeExports.jsx(ProfileMenu, {
 	        user: user,
